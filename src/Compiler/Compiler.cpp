@@ -6,6 +6,7 @@
 #include <algorithm>
 #include "../helpers/MiscFunctions.hpp"
 #include <chrono>
+#include <functional>
 
 CCompiler::CCompiler(std::string output, bool raw) {
     std::chrono::high_resolution_clock::time_point begin = std::chrono::high_resolution_clock::now();
@@ -319,6 +320,111 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
         return nullptr;
     };
 
+    std::function<bool(std::deque<SToken*>&, int)> compileExpression;
+
+    // returns true if function found
+    auto callFunction = [&](size_t& i) -> bool {
+        int argno = 0;
+
+        // maybe it's a function
+        if (PTOKENS[i + 1].type == TOKEN_OPEN_PARENTHESIS) {
+            // arg list
+            while (PTOKENS[i + 1 + argno].type != TOKEN_CLOSE_PARENTHESIS) {
+                argno++;
+                if (i + 1 + argno >= PTOKENS.size()) {
+                    Debug::log(ERR, "Syntax error", "unclosed parentheses", PTOKENS[i].raw.c_str());
+                    return false;
+                }
+            }
+        }
+
+        const auto FUNCIT = std::find_if(m_dFunctions.begin(), m_dFunctions.end(), [&](const SFunction& other) {
+            // U8@main(U8@name)
+            auto NAME = other.signature.substr(other.signature.find_first_of('@') + 1);
+            NAME = NAME.substr(0, NAME.find_first_of('('));
+
+            auto ARGNO = std::count(other.signature.begin(), other.signature.end(), '@') - 1;
+
+            if (NAME == PTOKENS[i].raw && argno == ARGNO) {
+                return true;
+            }
+
+            return false;
+        });
+
+        if (FUNCIT == m_dFunctions.end()) {
+            return false;
+        }
+
+        // calling convention:
+        // push the args in the order they are defined (reverse on the stack)
+
+        // push B
+        {
+            BYTE bytes[] = {
+                0x37,
+            };
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+            m_iBytesSize += 1;
+        }
+
+        // Calling convention: push all the args to the stack in their order
+        i += 2;
+        int pushedVars = 0;
+        while (argno > 0 && PTOKENS[i].type != TOKEN_CLOSE_PARENTHESIS) {
+            if (i >= PTOKENS.size()) {
+                Debug::log(ERR, "Syntax error", "unclosed parentheses", PTOKENS[i].raw.c_str());
+                return false;
+            }
+
+            // compile to A
+            std::deque<SToken*> tokensForExpr;
+            while (PTOKENS[i].type != TOKEN_SEMICOLON) {
+                tokensForExpr.emplace_back((SToken*)&PTOKENS[i]);
+                i++;
+            }
+
+            compileExpression(tokensForExpr, 1);
+
+            BYTE bytes[] = {
+                0x36
+            };
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+            m_iBytesSize += 1;
+            pushedVars++;
+        }
+
+        // jump to subroutine
+        {
+            BYTE bytes[] = {
+                0x30, /* TSX for new func */
+                0xBD, (uint8_t)((uint16_t)FUNCIT->binaryBegin >> 8), (uint8_t)((uint16_t)FUNCIT->binaryBegin & 0xFF)};
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 4);
+            m_iBytesSize += 4;
+        }
+
+        // Calling convention: pop the stack vars
+        for (int j = 0; j < pushedVars; ++j) {
+            BYTE bytes[] = {
+                0x32
+            };
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+            m_iBytesSize += 1;
+        }
+
+        // pop B and update IR
+        {
+            BYTE bytes[] = {
+                0x33,
+                0x30 /* TSX */
+            };
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+            m_iBytesSize += 2;
+        }
+
+        return true;
+    };
+
     auto loadTokenToAccumulator = [&](SToken* token, bool accA) -> bool {
         if (isNumber(token->raw, false)) {
             int CONSTANT = std::stoi(token->raw);
@@ -335,8 +441,30 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
             auto pVariable = findVariable(token);
 
             if (!pVariable) {
-                Debug::log(ERR, "Syntax error", "requested variable %s was not declared.", token->raw.c_str());
-                return false;
+                // get token's i
+                size_t foundI = 0;
+                for (size_t i = 0; i < PTOKENS.size(); ++i) {
+                    if (&PTOKENS[i] == token) {
+                        foundI = i;
+                        break;
+                    }
+                }
+
+                if (!callFunction(foundI)) {
+                    Debug::log(ERR, "Syntax error", "requested variable %s was not declared.", token->raw.c_str());
+                    return false;
+                } else {
+                    // we got the var in A
+                    if (!accA) {
+                        BYTE bytes[] = {
+                            0x16 /* TAB */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+                        m_iBytesSize += 1;
+                    }
+
+                    return true;
+                }
             }
 
             BYTE bytes[] = {
@@ -350,7 +478,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
     };
 
     // will compile the expression and put the result in ACC B, or A if resultAccumulator is 1
-    auto compileExpression = [&](std::deque<SToken*>& TOKENS, int resultAccumulator = 0) -> bool {
+    compileExpression = [&](std::deque<SToken*>& TOKENS, int resultAccumulator = 0) -> bool {
         // operate from left to right
 
         if (TOKENS.size() == 1) {
@@ -526,6 +654,9 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
     for (size_t i = m_iCurrentToken; PTOKENS[i].type != TOKEN_CLOSE_CURLY; i++) {
         const auto TOKEN = &PTOKENS[i];
         m_iCurrentToken = i;
+
+        if (TOKEN->type == TOKEN_SEMICOLON)
+            continue;
 
         if (TOKEN->type == TOKEN_KEYWORD) {
             // keyword. Parse it.
@@ -810,111 +941,10 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
 
             if (!pVariable) {
 
-                // maybe it's a function
-                int argno = 0;
-                if (PTOKENS[i + 1].type == TOKEN_OPEN_PARENTHESIS) {
-                    // arg list
-                    while (PTOKENS[i + 1 + argno].type != TOKEN_CLOSE_PARENTHESIS) {
-                        argno++;
-                        if (i + 1 + argno >= PTOKENS.size()) {
-                            Debug::log(ERR, "Syntax error", "unclosed parentheses", TOKEN->raw.c_str());
-                            return false;
-                        }
-                    }
-                }
-
-                // TODO: this is broken cuz u cant %rbp - 2
-
-                const auto FUNCIT = std::find_if(m_dFunctions.begin(), m_dFunctions.end(), [&] (const SFunction& other) {
-                    // U8@main(U8@name)
-                    auto NAME = other.signature.substr(other.signature.find_first_of('@') + 1);
-                    NAME = NAME.substr(0, NAME.find_first_of('('));
-
-                    auto ARGNO = std::count(other.signature.begin(), other.signature.end(), '@') - 1;
-
-                    if (NAME == TOKEN->raw && argno == ARGNO) {
-                        return true;
-                    }
-
-                    return false;
-                });
-
-                if (FUNCIT != m_dFunctions.end()) {
-                    // call the function!
-
-                    // calling convention:
-                    // push the args in the order they are defined (reverse on the stack)
-
-                    // push A, B
-                    {
-                        BYTE bytes[] = {
-                            0x36,
-                            0x37,
-                        };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
-                        m_iBytesSize += 2;
-                    }
-
-                    // Calling convention: push all the args to the stack in their order
-                    i += 2;
-                    int pushedVars = 0;
-                    while (argno > 0 && PTOKENS[i].type != TOKEN_CLOSE_PARENTHESIS) {
-                        if (i >= PTOKENS.size()) {
-                            Debug::log(ERR, "Syntax error", "unclosed parentheses", TOKEN->raw.c_str());
-                            return false;
-                        }
-
-                        // compile to A
-                        std::deque<SToken*> tokensForExpr;
-                        while (PTOKENS[i].type != TOKEN_SEMICOLON) {
-                            tokensForExpr.emplace_back((SToken*)&PTOKENS[i]);
-                            i++;
-                        }
-
-                        compileExpression(tokensForExpr, 1);
-
-                        BYTE bytes[] = {
-                            0x36
-                        };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-                        m_iBytesSize += 1;
-                        pushedVars++;
-                    }
-
-                    // jump to subroutine
-                    {
-                        BYTE bytes[] = {
-                            0x30,  /* TSX for new func */
-                            0xBD, (uint8_t)((uint16_t)FUNCIT->binaryBegin >> 8), (uint8_t)((uint16_t)FUNCIT->binaryBegin & 0xFF)
-                        };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 4);
-                        m_iBytesSize += 4;
-                    }
-
-                    // Calling convention: pop the stack vars
-                    for (int j = 0; j < pushedVars; ++j) {
-                        BYTE bytes[] = {
-                            0x32
-                        };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-                        m_iBytesSize += 1;
-                    }
-
-                    // pop A and B and update IR
-                    {
-                        BYTE bytes[] = {
-                            0x33,
-                            0x32,
-                            0x30 /* TSX */
-                        };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
-                        m_iBytesSize += 3;
-                    }
-
-                    i--; /* i++ in for */
-
+                if (callFunction(i)) {
+                    i--;  // for i++ later
                     continue;
-                }
+                }    
 
                 Debug::log(ERR, "Syntax error", "requested variable %s was not declared.", TOKEN->raw.c_str());
                 return false;
