@@ -9,6 +9,9 @@ struct SFunction {
     std::string signature = "";
     size_t binaryBegin;
     std::string returnType = "";
+
+    // only for parsing
+    uint8_t stackOffset = 0;
 };
 
 class CCompiler {
@@ -30,11 +33,12 @@ private:
 
     BYTE*       m_pBytes;
     size_t      m_iBytesSize = 0;
-    uint16_t    m_uCurrentStackOffset = 0;
     std::deque<SFunction> m_dFunctions;
     size_t      m_iCurrentToken = 0;
 
     bool        m_bRawOutput = false;
+
+    SFunction*  m_pCurrentFunction = nullptr;
 };
 
 inline std::unique_ptr<CCompiler> g_pCompiler;

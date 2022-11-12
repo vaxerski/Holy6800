@@ -256,7 +256,6 @@ void CCompiler::initializeBinary(uint16_t mainStart) {
 bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std::pair<SToken*, SToken*>>& args) {
 
     // create the function in memory
-
     SFunction newFunction;
     newFunction.signature = returnType->raw + "@" + name->raw + "(";
     for (auto&[type, arg] : args) {
@@ -276,7 +275,7 @@ bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std
     newFunction.binaryBegin = m_iBytesSize;
     newFunction.returnType = returnType->raw;
 
-    m_dFunctions.emplace_back(newFunction);
+    m_pCurrentFunction = &m_dFunctions.emplace_back(newFunction);
 
     // if this function is the main, do the init
     const bool ISMAIN = newFunction.signature == "U8@main();";
@@ -288,6 +287,8 @@ bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std
 
     if (!compileScope(stackVariables, ISMAIN))
         return false;
+
+    m_pCurrentFunction = nullptr;
 
     return true;
 }
@@ -339,10 +340,10 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
             }
 
             BYTE bytes[] = {
-                accA ? 0xB6 : 0xF6, (uint8_t)(pVariable->second >> 8), (uint8_t)(pVariable->second & 0xFF)
+                accA ? 0xA6 : 0xE6, (uint8_t)(pVariable->second)
             };
-            writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
-            m_iBytesSize += 3;
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+            m_iBytesSize += 2;
         }
 
         return true;
@@ -408,7 +409,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                         0x20, 0x0C, /* skip 0: BRA [end] */
                         0x5A,   /* DEC B (because * 1 is done)*/
                         0x36,   /* PSH A*/
-                        0xBB, (uint8_t)((uint16_t)(0xFFFF - m_uCurrentStackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_uCurrentStackOffset) & 0xFF), /* back: ADDA [the thing we pushed] */
+                        0xBB, (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) & 0xFF), /* back: ADDA [the thing we pushed] */
                         0x5A, /* DEC B*/
                         0xC1, 0x00, /* CMPB #0 */
                         0x26, (uint8_t)(-0x8), /* BNE [back]*/
@@ -463,7 +464,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                 } else if (OPERATION->raw == "&") {
                     BYTE bytes[] = {
                         0x37,   /* PSH B */
-                        0xB4, (uint8_t)((uint16_t)(0xFFFF - m_uCurrentStackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_uCurrentStackOffset) & 0xFF), /* AND A [what we pushed] */
+                        0xB4, (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) & 0xFF), /* AND A [what we pushed] */
                         0x33 /* PUL B */
                     };
                     writeBytes(m_pBytes + m_iBytesSize, bytes, 5);
@@ -471,7 +472,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                 } else if (OPERATION->raw == "|") {
                     BYTE bytes[] = {
                         0x37,   /* PSH B */
-                        0xBA, (uint8_t)((uint16_t)(0xFFFF - m_uCurrentStackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_uCurrentStackOffset) & 0xFF), /* ORA A [what we pushed] */
+                        0xBA, (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) & 0xFF), /* ORA A [what we pushed] */
                         0x33 /* PUL B */
                     };
                     writeBytes(m_pBytes + m_iBytesSize, bytes, 5);
@@ -501,8 +502,26 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
             };
             writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
             m_iBytesSize += 1;
+
+            m_pCurrentFunction->stackOffset -= 1;
         }
+
+        // fix up the IR
+        BYTE bytes[] = {
+            0x30 /* TSX */
+        };
+        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+        m_iBytesSize += 1;
     };
+
+    if (ISMAIN) {
+        // init the IR
+        BYTE bytes[] = {
+            0xCE, 0xFF, 0xFF
+        };
+        writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
+        m_iBytesSize += 3;
+    }
 
     for (size_t i = m_iCurrentToken; PTOKENS[i].type != TOKEN_CLOSE_CURLY; i++) {
         const auto TOKEN = &PTOKENS[i];
@@ -772,16 +791,17 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                 return false;
 
             // register new local
-            m_uCurrentStackOffset += 1;
-            stackVariables.push_back( { TYPETOKEN->raw + "@" + NAMETOKEN->raw, 0xFFFF - m_uCurrentStackOffset + 1 /* first var at 0 */ } );
+            m_pCurrentFunction->stackOffset += 1;
+            stackVariables.push_back( { TYPETOKEN->raw + "@" + NAMETOKEN->raw, m_pCurrentFunction->stackOffset - 1 /* first var at 0 */ } );
 
             {
                 BYTE bytes[] {
-                    0x37 /* PSH B */
+                    0x37, /* PSH B */
+                    0x30,  /* TSX */
                 };
 
-                writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-                m_iBytesSize += 1;
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                m_iBytesSize += 2;
             }
 
             // finish
@@ -822,79 +842,76 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                 if (FUNCIT != m_dFunctions.end()) {
                     // call the function!
 
-                    if (argno == 0) {
-                        // easy
+                    // calling convention:
+                    // push the args in the order they are defined (reverse on the stack)
+
+                    // push A, B
+                    {
                         BYTE bytes[] = {
+                            0x36,
+                            0x37,
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                        m_iBytesSize += 2;
+                    }
+
+                    // Calling convention: push all the args to the stack in their order
+                    i += 2;
+                    int pushedVars = 0;
+                    while (argno > 0 && PTOKENS[i].type != TOKEN_CLOSE_PARENTHESIS) {
+                        if (i >= PTOKENS.size()) {
+                            Debug::log(ERR, "Syntax error", "unclosed parentheses", TOKEN->raw.c_str());
+                            return false;
+                        }
+
+                        // compile to A
+                        std::deque<SToken*> tokensForExpr;
+                        while (PTOKENS[i].type != TOKEN_SEMICOLON) {
+                            tokensForExpr.emplace_back((SToken*)&PTOKENS[i]);
+                            i++;
+                        }
+
+                        compileExpression(tokensForExpr, 1);
+
+                        BYTE bytes[] = {
+                            0x36
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+                        m_iBytesSize += 1;
+                        pushedVars++;
+                    }
+
+                    // jump to subroutine
+                    {
+                        BYTE bytes[] = {
+                            0x30,  /* TSX for new func */
                             0xBD, (uint8_t)((uint16_t)FUNCIT->binaryBegin >> 8), (uint8_t)((uint16_t)FUNCIT->binaryBegin & 0xFF)
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 4);
+                        m_iBytesSize += 4;
+                    }
+
+                    // Calling convention: pop the stack vars
+                    for (int j = 0; j < pushedVars; ++j) {
+                        BYTE bytes[] = {
+                            0x32
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+                        m_iBytesSize += 1;
+                    }
+
+                    // pop A and B and update IR
+                    {
+                        BYTE bytes[] = {
+                            0x33,
+                            0x32,
+                            0x30 /* TSX */
                         };
                         writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
                         m_iBytesSize += 3;
-                    } else {
-
-                        // push A and B
-                        {
-                            BYTE bytes[] = {
-                                0x36,
-                                0x37,
-                            };
-                            writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
-                            m_iBytesSize += 2;
-                        }
-
-                        // push all the args to the stack in their order
-                        i += 2;
-                        int pushedVars = 0;
-                        while (PTOKENS[i].type != TOKEN_CLOSE_PARENTHESIS) {
-                            if (i >= PTOKENS.size()) {
-                                Debug::log(ERR, "Syntax error", "unclosed parentheses", TOKEN->raw.c_str());
-                                return false;
-                            }
-
-                            // compile to A
-                            std::deque<SToken*> tokensForExpr;
-                            while (PTOKENS[i].type != TOKEN_SEMICOLON) {
-                                tokensForExpr.emplace_back((SToken*)&PTOKENS[i]);
-                                i++;
-                            }
-
-                            compileExpression(tokensForExpr, 1);
-
-                            BYTE bytes[] = {
-                                0x36
-                            };
-                            writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-                            m_iBytesSize += 1;
-                            pushedVars++;
-                        }
-
-                        // jump to subroutine
-                        {
-                            BYTE bytes[] = {
-                                0xBD, (uint8_t)((uint16_t)FUNCIT->binaryBegin >> 8), (uint8_t)((uint16_t)FUNCIT->binaryBegin & 0xFF)
-                            };
-                            writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
-                            m_iBytesSize += 3;
-                        }
-
-                        // pop the stack vars
-                        for (int j = 0; j < pushedVars; ++j) {
-                            BYTE bytes[] = {
-                                0x32
-                            };
-                            writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-                            m_iBytesSize += 1;
-                        }
-
-                        // pop A and B
-                        {
-                            BYTE bytes[] = {
-                                0x33,
-                                0x32,
-                            };
-                            writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
-                            m_iBytesSize += 2;
-                        }
                     }
+
+                    i--; /* i++ in for */
 
                     continue;
                 }
@@ -921,10 +938,10 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
 
             // copy value from A to the variable
             BYTE bytes[] = {
-                0xB7, (uint8_t)(pVariable->second >> 8), (uint8_t)(pVariable->second & 0xFF)
+                0xA7, (uint8_t)(pVariable->second)
             };
-            writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
-            m_iBytesSize += 3;
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+            m_iBytesSize += 2;
         } else if (TOKEN->type == TOKEN_OPERATOR && TOKEN->raw == "*") {
             // dereferencing and assignment
             if (i + 3 >= PTOKENS.size()) {
@@ -963,10 +980,11 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                 0xFE, (uint8_t)(pVariable->second >> 8), (uint8_t)(pVariable->second & 0xFF), /* STX [our var] */
                 0x4F, /* CLR A*/
                 0x1B, /* ABA */
-                0xA7, 0x00 /* STA A 0,[X]*/
+                0xA7, 0x00, /* STA A 0,[X] */
+                0x30, /* TSX  - revert our damage to the IR */
             };
-            writeBytes(m_pBytes + m_iBytesSize, bytes, 7);
-            m_iBytesSize += 7;
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 8);
+            m_iBytesSize += 8;
         }
 
         m_iCurrentToken = i;
