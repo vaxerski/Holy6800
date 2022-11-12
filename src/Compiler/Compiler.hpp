@@ -14,6 +14,12 @@ struct SFunction {
     uint8_t stackOffset = 0;
 };
 
+struct SLocal {
+    std::string name = "";
+    uint8_t offset = 0;
+    bool funcParam = false;
+};
+
 class CCompiler {
 public:
     CCompiler(std::string output, bool raw);
@@ -25,7 +31,7 @@ private:
 
     void        initializeBinary(uint16_t start);
     bool        compileFunction(SToken* returnType, SToken* name, std::deque<std::pair<SToken*, SToken*>>& args);
-    bool        compileScope(std::deque<std::pair<std::string, uint16_t>>& inheritedLocals, bool ISMAIN = false);
+    bool        compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN = false);
 
     void        writeBytes(void* begin, BYTE* bytes, size_t len);
 

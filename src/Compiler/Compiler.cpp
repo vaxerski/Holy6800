@@ -260,7 +260,7 @@ bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std
     SFunction newFunction;
     newFunction.signature = returnType->raw + "@" + name->raw + "(";
     for (auto&[type, arg] : args) {
-        newFunction.signature += type->raw + ":" + arg->raw + ",";
+        newFunction.signature += type->raw + "@" + arg->raw + ",";
     }
 
     if (!args.empty())
@@ -284,7 +284,13 @@ bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std
         initializeBinary(newFunction.binaryBegin);
 
     /* signature -> stack offset */
-    std::deque<std::pair<std::string, uint16_t>> stackVariables;
+    std::deque<SLocal> stackVariables;
+
+    /* add locals */
+    uint8_t stackOffset = 0;
+    for (auto& arg : args) {
+        stackVariables.push_back( { arg.first->raw + "@" + arg.second->raw, stackOffset++, true });
+    }
 
     if (!compileScope(stackVariables, ISMAIN))
         return false;
@@ -294,16 +300,16 @@ bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std
     return true;
 }
 
-bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inheritedLocals, bool ISMAIN) {
+bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
     // start compiling
     const std::deque<SToken>& PTOKENS = g_pLiTokenizer->m_dTokens;
 
     /* signature -> stack offset */
-    std::deque<std::pair<std::string, uint16_t>> stackVariables;
+    std::deque<SLocal> stackVariables;
 
-    auto findVariable = [&](SToken* TOKEN) -> std::pair<std::string, uint16_t>* {
+    auto findVariable = [&](SToken* TOKEN) -> SLocal* {
         for (auto& sv : stackVariables) {
-            if (sv.first.substr(sv.first.find_first_of('@') + 1).find(TOKEN->raw) == 0) {
+            if (sv.name.substr(sv.name.find_first_of('@') + 1).find(TOKEN->raw) == 0) {
                 // found the variable!
                 return &sv;
             }
@@ -311,7 +317,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
 
         // check inherited vars
         for (auto& sv : inheritedLocals) {
-            if (sv.first.substr(sv.first.find_first_of('@') + 1).find(TOKEN->raw) == 0) {
+            if (sv.name.substr(sv.name.find_first_of('@') + 1).find(TOKEN->raw) == 0) {
                 // found the variable!
                 return &sv;
             }
@@ -329,8 +335,13 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
         // maybe it's a function
         if (PTOKENS[i + 1].type == TOKEN_OPEN_PARENTHESIS) {
             // arg list
-            while (PTOKENS[i + 1 + argno].type != TOKEN_CLOSE_PARENTHESIS) {
-                argno++;
+            int iter = 0;
+            while (PTOKENS[i + 1 + iter].type != TOKEN_CLOSE_PARENTHESIS) {
+                if (PTOKENS[i + 1 + iter].type == TOKEN_LITERAL)
+                    argno++;
+
+                iter++;
+                
                 if (i + 1 + argno >= PTOKENS.size()) {
                     Debug::log(ERR, "Syntax error", "unclosed parentheses", PTOKENS[i].raw.c_str());
                     return false;
@@ -379,7 +390,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
 
             // compile to A
             std::deque<SToken*> tokensForExpr;
-            while (PTOKENS[i].type != TOKEN_SEMICOLON) {
+            while (PTOKENS[i].type != TOKEN_COLON && PTOKENS[i].type != TOKEN_CLOSE_PARENTHESIS) {
                 tokensForExpr.emplace_back((SToken*)&PTOKENS[i]);
                 i++;
             }
@@ -397,16 +408,16 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
         // jump to subroutine
         {
             BYTE bytes[] = {
-                0x30, /* TSX for new func */
-                0xBD, (uint8_t)((uint16_t)FUNCIT->binaryBegin >> 8), (uint8_t)((uint16_t)FUNCIT->binaryBegin & 0xFF)};
-            writeBytes(m_pBytes + m_iBytesSize, bytes, 4);
-            m_iBytesSize += 4;
+                0xBD, (uint8_t)((uint16_t)FUNCIT->binaryBegin >> 8), (uint8_t)((uint16_t)FUNCIT->binaryBegin & 0xFF)
+            };
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
+            m_iBytesSize += 3;
         }
 
         // Calling convention: pop the stack vars
         for (int j = 0; j < pushedVars; ++j) {
             BYTE bytes[] = {
-                0x32
+                0x33 /* PULB */
             };
             writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
             m_iBytesSize += 1;
@@ -450,17 +461,28 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                     }
                 }
 
+                if (!accA) {
+                    // we need to save the Acc A
+                    BYTE bytes[] = {
+                        0x36 /* PSHA */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+                    m_iBytesSize += 1;
+                }
+
                 if (!callFunction(foundI)) {
                     Debug::log(ERR, "Syntax error", "requested variable %s was not declared.", token->raw.c_str());
                     return false;
                 } else {
-                    // we got the var in A
+                    // we got the var in A.
+                    // Additionally, if !accA, restore A and push to B
                     if (!accA) {
                         BYTE bytes[] = {
-                            0x16 /* TAB */
+                            0x16, /* TAB */
+                            0x32 /* PULA */
                         };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-                        m_iBytesSize += 1;
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                        m_iBytesSize += 2;
                     }
 
                     return true;
@@ -468,7 +490,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
             }
 
             BYTE bytes[] = {
-                accA ? 0xA6 : 0xE6, (uint8_t)(pVariable->second)
+                accA ? 0xA6 : 0xE6, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset)
             };
             writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
             m_iBytesSize += 2;
@@ -493,9 +515,17 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
             if (!loadTokenToAccumulator(FIRSTTOKEN, true))
                 return false;
 
+            size_t i = 1;
+
+            if (TOKENS[i]->type == TOKEN_OPEN_PARENTHESIS) {
+                while (TOKENS[i]->type != TOKEN_CLOSE_PARENTHESIS)
+                    i++;
+                i++;
+            }
+
             // now we enter a loop, parsing each next operator
             // Acc A has the first item
-            for (size_t i = 1; i < TOKENS.size(); i++) {
+            for (; i < TOKENS.size(); i++) {
                 const auto OPERATION = TOKENS[i];
                 const auto SECONDITEM = TOKENS[i + 1];
 
@@ -512,8 +542,15 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                 // compile expression
                 // load the second arg to Acc B
                 // I know this could be optimized but I am lazy
+
                 if (!loadTokenToAccumulator(SECONDITEM, false))
                     return false;
+
+                if (i + 2 < TOKENS.size() && TOKENS[i + 2]->type == TOKEN_OPEN_PARENTHESIS) {
+                    while (TOKENS[i]->type != TOKEN_CLOSE_PARENTHESIS)
+                        i++;
+                    i--;
+                }
 
                 // perform the operation
                 if (OPERATION->raw == "+") {
@@ -649,6 +686,13 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
         };
         writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
         m_iBytesSize += 3;
+    } else {
+        // init the IR
+        BYTE bytes[] = {
+            0x30 /* TSX */
+        };
+        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+        m_iBytesSize += 1;
     }
 
     for (size_t i = m_iCurrentToken; PTOKENS[i].type != TOKEN_CLOSE_CURLY; i++) {
@@ -754,7 +798,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                     m_iBytesSize += 7;
                 }
 
-                std::deque<std::pair<std::string, uint16_t>> parentStack;
+                std::deque<SLocal> parentStack;
                 for (auto& il : inheritedLocals) {
                     parentStack.emplace_back(il);
                 }
@@ -822,7 +866,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
                 }
 
                 {
-                    std::deque<std::pair<std::string, uint16_t>> parentStack;
+                    std::deque<SLocal> parentStack;
                     for (auto& il : inheritedLocals) {
                         parentStack.emplace_back(il);
                     }
@@ -861,7 +905,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
 
                     // write the block
                     {
-                        std::deque<std::pair<std::string, uint16_t>> parentStack;
+                        std::deque<SLocal> parentStack;
                         for (auto& il : inheritedLocals) {
                             parentStack.emplace_back(il);
                         }
@@ -923,7 +967,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
 
             // register new local
             m_pCurrentFunction->stackOffset += 1;
-            stackVariables.push_back( { TYPETOKEN->raw + "@" + NAMETOKEN->raw, m_pCurrentFunction->stackOffset - 1 /* first var at 0 */ } );
+            stackVariables.push_back(SLocal{TYPETOKEN->raw + "@" + NAMETOKEN->raw, (uint8_t)(m_pCurrentFunction->stackOffset - 1) /* first var at 0 */, false});
 
             {
                 BYTE bytes[] {
@@ -968,7 +1012,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
 
             // copy value from A to the variable
             BYTE bytes[] = {
-                0xA7, (uint8_t)(pVariable->second)
+                0xA7, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset)
             };
             writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
             m_iBytesSize += 2;
@@ -1007,7 +1051,7 @@ bool CCompiler::compileScope(std::deque<std::pair<std::string, uint16_t>>& inher
 
             // store whatever we have to the memory pointed by the variable
             BYTE bytes[] = {
-                0xFE, (uint8_t)(pVariable->second >> 8), (uint8_t)(pVariable->second & 0xFF), /* STX [our var] */
+                0xEE, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset), /* LDX [our var] */
                 0x4F, /* CLR A*/
                 0x1B, /* ABA */
                 0xA7, 0x00, /* STA A 0,[X] */
