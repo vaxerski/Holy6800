@@ -8,9 +8,11 @@
 #include <chrono>
 #include <functional>
 
-CCompiler::CCompiler(std::string output, bool raw) {
+CCompiler::CCompiler(std::string output, bool raw, bool optimize) {
     std::chrono::high_resolution_clock::time_point begin = std::chrono::high_resolution_clock::now();
     m_bRawOutput = raw;
+    m_bOptimize = optimize;
+    optimizer.p = this;
 
     m_pBytes = (BYTE*)malloc(32000);  // 32K
 
@@ -31,6 +33,10 @@ CCompiler::CCompiler(std::string output, bool raw) {
 }
 
 void CCompiler::write(std::string path) {
+
+    // if optimization is enabled, optimize the binary
+    if (m_bOptimize)
+        optimizer.optimizeBinary();
 
     // sanitize path
     if (path.empty()) {
@@ -1039,13 +1045,11 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 // store whatever we have to the memory pointed by the variable
                 BYTE bytes[] = {
                     0xEE, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)), /* LDX [our var] */
-                    0x4F,                                                                              /* CLR A*/
-                    0x1B,                                                                              /* ABA */
-                    0xA7, 0x00,                                                                        /* STA A 0,[X] */
+                    0xE7, 0x00,                                                                        /* STA B 0,[X] */
                     0x30,                                                                              /* TSX  - revert our damage to the IR */
                 };
-                writeBytes(m_pBytes + m_iBytesSize, bytes, 7);
-                m_iBytesSize += 7;
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 5);
+                m_iBytesSize += 5;
             } else {
                 compileExpression(tokensForExpr, 1);
 
@@ -1071,4 +1075,204 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
 
 void CCompiler::writeBytes(void* begin, BYTE* bytes, size_t len) {
     memcpy(begin, bytes, len);
+}
+
+void CCompiler::SOptimizer::updateByteStartPositions() {
+    byteStartPositions.clear();
+    for (size_t i = 0; i < p->m_iBytesSize; ++i) {
+        byteStartPositions.emplace_back(i);
+
+        int a = p->m_pBytes[i];
+
+        i += OPERATIONSTOBYTES.at(a) - 1;  // +1 for ++i in for
+        continue;
+    }
+}
+
+void CCompiler::SOptimizer::fixAddressesAfterRemove(size_t where, size_t lenRemoved) {
+    for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
+        // check opcode
+        if (isRelative(p->m_pBytes[i])) {
+            // check if it concerns us
+            const uint8_t OPCODELEN = OPERATIONSTOBYTES.at(p->m_pBytes[i]);
+            const bool LEFTSIDEOPCODE = i < where;
+            const bool LEFTSIDEDESTINATION = OPCODELEN == 2 ? i + (int8_t)p->m_pBytes[i + 1] < where : (uint16_t)(((uint16_t)p->m_pBytes[i + 1]) * 0x100 + p->m_pBytes[i + 2]) <= where;
+
+            if (LEFTSIDEDESTINATION == LEFTSIDEOPCODE) {
+                // no fix needed for this op if it's relative or we are on the left
+                if (OPCODELEN == 2 || LEFTSIDEDESTINATION)
+                    continue;
+
+                // otherwise, shift to the left
+                uint16_t address = (uint16_t)((((uint16_t)p->m_pBytes[i + 1]) << 8) + p->m_pBytes[i + 2]);
+                address -= lenRemoved;
+                p->m_pBytes[i + 1] = (uint8_t)(address >> 8);
+                p->m_pBytes[i + 2] = (uint8_t)(address & 0xFF);
+                continue;
+            }
+
+            // we need to fix this op
+            if (OPCODELEN == 2) {
+                if (LEFTSIDEOPCODE) {
+                    // right side dest, moved left, subtract len
+                    p->m_pBytes[i] -= lenRemoved;
+                } else {
+                    // left side dest, moved right, add len
+                    p->m_pBytes[i] += lenRemoved;
+                }
+            } else {
+                // this is an absolute address
+                uint16_t address = (uint16_t)((((uint16_t)p->m_pBytes[i + 1]) << 8) + p->m_pBytes[i + 2]);
+                if (LEFTSIDEOPCODE) {
+                    // right side dest, moved left, subtract len
+                    address -= lenRemoved;
+
+                    // save back
+                    p->m_pBytes[i + 1] = (uint8_t)(address >> 8);
+                    p->m_pBytes[i + 2] = (uint8_t)(address & 0xFF);
+                }
+
+                // if the absolute addr is to the left, ignore. It did not change.
+            }
+        }
+    }
+
+    updateByteStartPositions();
+}
+
+size_t CCompiler::SOptimizer::getLastByteStart(size_t cur) {
+    for (size_t i = 0; i < byteStartPositions.size(); ++i) {
+        if (byteStartPositions[i] >= cur)
+            return byteStartPositions[--i];
+    }
+
+    return 0;
+};
+
+size_t CCompiler::SOptimizer::getNextByteStart(size_t cur) {
+    for (size_t i = 0; i < byteStartPositions.size(); ++i) {
+        if (byteStartPositions[i] >= cur && i + 1 < byteStartPositions.size())
+            return byteStartPositions[++i];
+    }
+
+    return 0;
+};
+
+bool CCompiler::SOptimizer::isRelative(uint8_t byte) {
+    // todo: this is horrible
+    return byte == 0x24 || byte == 0x25 || byte == 0x27 || byte == 0x2C || byte == 0x2E || byte == 0x22 || byte == 0x2F || byte == 0x23 || byte == 0x2D || byte == 0x2D || byte == 0x2B || byte == 0x26 || byte == 0x2A || byte == 0x20 || byte == 0x8D || byte == 0x28 || byte == 0x29 || byte == 0x6E || byte == 0x7E || byte == 0xAD || byte == 0xBD;
+};
+
+bool CCompiler::SOptimizer::isRetWai(uint8_t byte) {
+    return byte == 0x3E || byte == 0x39;
+};
+
+bool CCompiler::SOptimizer::isPush(uint8_t byte) {
+    return byte == 0x37 || byte == 0x36;
+};
+
+// ignores 16-bit EXT LDAs
+bool CCompiler::SOptimizer::isLoad(uint8_t byte) {
+    return byte == 0x86 || byte == 0x96 || byte == 0xA6 || byte == 0xC6 || byte == 0xD6 || byte == 0xE6;
+};
+
+void CCompiler::SOptimizer::optimizeBinary() {
+
+    std::chrono::system_clock::time_point begin = std::chrono::system_clock::now();
+
+    // go through all the bytes and check all our optimization mechanisms
+
+    size_t removedBytes = 0;
+
+    updateByteStartPositions();
+
+    auto removeBytes = [&](size_t where, size_t howMany) -> void {
+        memmove(p->m_pBytes + where, p->m_pBytes + where + howMany, p->m_iBytesSize - where - howMany);
+
+        updateByteStartPositions();
+
+        p->m_iBytesSize -= howMany;
+        removedBytes += howMany;
+
+        fixAddressesAfterRemove(where, howMany);
+    };
+
+    for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
+        if (p->m_pBytes[i] == 0x30 /* TSX */ && i + 1 < p->m_iBytesSize && p->m_pBytes[i + 1] == 0x30) {
+            // multi-TSX optimization
+
+            int countTSX = 0;
+            int iter = 0;
+            while (p->m_pBytes[i + iter] == 0x30) {
+                countTSX++;
+                iter++;
+            }
+
+            removeBytes(i + 1, countTSX - 1);
+        }
+
+        if (p->m_pBytes[i] == 0x30 /* TSX */ && i + 1 < p->m_iBytesSize && isRetWai(p->m_pBytes[i + 1])) {
+            /* TSX before RTS/WAI */
+
+            removeBytes(i, 1);
+        }
+
+        if (p->m_pBytes[i] == 0x3E /* WAI */ && i + 1 < p->m_iBytesSize) {
+            // stuff after WAI
+            size_t howMany = p->m_iBytesSize - i - 1;
+
+            memset(p->m_pBytes + i + 1, 0x00, howMany);
+            p->m_iBytesSize -= howMany;
+            removedBytes += howMany;
+        }
+
+        if (isPush(p->m_pBytes[i]) && i + 1 < p->m_iBytesSize) {
+            // possible TSX simplification
+
+            // checks if we can remove the TSX that is above the LDA before the PSH
+
+            const auto LASTBYTE = getLastByteStart(i);
+            const auto LASTBYTE2 = getLastByteStart(i - 2);
+            const auto NEXTBYTE = getNextByteStart(i);
+
+            if (i - 4 > 0 && isLoad(p->m_pBytes[LASTBYTE]) && p->m_pBytes[LASTBYTE2] == 0x30 /* TSX */ && p->m_pBytes[NEXTBYTE] == 0x30 /* TSX */) {
+                i = LASTBYTE2; // go back to the TSX place
+
+                // simplify the TSX
+                removeBytes(i, 1);
+
+                // done
+            }
+        }
+
+        if (isLoad(p->m_pBytes[i])) {
+
+            const auto NEXTBYTE = getNextByteStart(i);
+            const auto NEXTBYTE2 = getNextByteStart(NEXTBYTE);
+
+            if (NEXTBYTE && NEXTBYTE2 && p->m_pBytes[NEXTBYTE] == 0xC6 /* LDA B #constant */ && p->m_pBytes[NEXTBYTE2] == 0x1B) {
+                // we can turn
+                //
+                // LDAA <something>
+                // LDAB #const
+                // ABA
+                //
+                // into
+                //
+                // LDAA <something>
+                // ADDA #const
+
+                p->m_pBytes[NEXTBYTE] = 0x8B;
+
+                removeBytes(NEXTBYTE + 2, 1);
+            }
+        }
+    }
+
+    memset(p->m_pBytes + p->m_iBytesSize, 0x00, removedBytes + 1);
+
+    Debug::log(LOG, "Optimization complete.", "Elapsed: %.2fms. Bytes optimized out: %i (-%.2f%)",
+               std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - begin).count() / 1000.f,
+               removedBytes,
+               ((double)removedBytes / (double)(p->m_iBytesSize + removedBytes)) * 100.0);
 }

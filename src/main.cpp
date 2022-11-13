@@ -20,10 +20,11 @@ std::deque<std::string> splitArgs(int argc, char** argv) {
 void printHelp() {
     std::cout << R"#(   Holy6800
 
-        -c [file]   -> compile a file
-        -o [file]   -> specify output
-        -r          -> raw output (not for hippy)
-        -h / --help -> print this
+        -c [file]           -> compile a file
+        -o [file]           -> specify output
+        -r                  -> raw output (not for hippy)
+        --no-optimizations  -> disable binary optimizations (debug builds)
+        -h / --help         -> print this
 )#";
 }
 
@@ -33,6 +34,7 @@ int main(int argc, char** argv, char** envp) {
     std::string fileToCompile = "";
     std::string output = "";
     bool raw = false;
+    bool optimize = true;
 
     for (long unsigned int i = 0; i < ARGS.size(); ++i) {
         if ((ARGS[i][0] == '-') && !isNumber(ARGS[i], true) /* For stuff like -2 */) {
@@ -40,17 +42,18 @@ int main(int argc, char** argv, char** envp) {
 
             if (ARGS[i] == "-c") {
                 fileToCompile = ARGS[++i];
-                i++;
                 continue;
             } else if (ARGS[i] == "-o") {
                 output = ARGS[++i];
-                i++;
                 continue;
             } else if (ARGS[i] == "-h" || ARGS[i] == "--help") {
                 printHelp();
                 continue;
             } else if (ARGS[i] == "-r") {
                 raw = true;
+                continue;
+            } else if (ARGS[i] == "--no-optimizations") {
+                optimize = false;
                 continue;
             } else {
                 std::cout << "Unrecognized parameter: " << ARGS[i] << "\n";
@@ -85,7 +88,7 @@ int main(int argc, char** argv, char** envp) {
 
     g_pLiTokenizer = std::make_unique<CLiTokenizer>(fileToCompile);
 
-    g_pCompiler = std::make_unique<CCompiler>(output, raw);
+    g_pCompiler = std::make_unique<CCompiler>(output, raw, optimize);
 
     return 0;
 }
