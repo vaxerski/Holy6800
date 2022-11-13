@@ -583,15 +583,17 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                         0x20, 0x0C, /* skip 0: BRA [end] */
                         0x5A,   /* DEC B (because * 1 is done)*/
                         0x36,   /* PSH A*/
-                        0xBB, (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) & 0xFF), /* back: ADDA [the thing we pushed] */
+                        0x30,   /* TSX */
+                        0xAB, 0x00, /* back: ADDA [the thing we pushed] */
                         0x5A, /* DEC B*/
                         0xC1, 0x00, /* CMPB #0 */
                         0x26, (uint8_t)(-0x8), /* BNE [back]*/
                         0x33, /* PULB (clean the stack)*/
+                        0x30, /* TSX */
                         /* end */
                     };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 19);
-                    m_iBytesSize += 19;
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 20);
+                    m_iBytesSize += 20;
                 } else if (OPERATION->raw == "/") {
                     Debug::log(ERR, "Syntax error", "/ not implemented");
                 } else if (OPERATION->raw == ">") {
