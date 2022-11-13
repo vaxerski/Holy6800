@@ -7,5 +7,7 @@ U8 main() {
 
     *addressB = counter;
 
-    return 0;
+    counter = *addressB + 2;
+
+    return counter;
 }

@@ -493,11 +493,23 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                 }
             }
 
-            BYTE bytes[] = {
-                accA ? 0xA6 : 0xE6, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset)
-            };
-            writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
-            m_iBytesSize += 2;
+            // dereference if needed
+            if (token->raw[0] == '*') {
+                BYTE bytes[] = {
+                    0xEE, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset), /* LDX [our var] */
+                    accA ? 0x4F : 0x5F,                                                                /* CLR A/B*/
+                    accA ? 0xA6 : 0xE6, 0x00,                                                          /* LDA A/B 0,[X] */
+                    0x30,                                                                              /* TSX  - revert our damage to the IR */
+                };
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
+                m_iBytesSize += 6;
+            } else {
+                BYTE bytes[] = {
+                    accA ? 0xA6 : 0xE6, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset)
+                };
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                m_iBytesSize += 2;
+            }
         }
 
         return true;
@@ -532,8 +544,6 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
             for (; i < TOKENS.size(); i++) {
                 const auto OPERATION = TOKENS[i];
                 const auto SECONDITEM = TOKENS[i + 1];
-
-                // check if we don't have a single arg op
 
                 if (OPERATION->type != TOKEN_OPERATOR) {
                     Debug::log(ERR, "Syntax error", "expected operator", TOKENS[0]->raw);
