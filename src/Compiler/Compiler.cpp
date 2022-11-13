@@ -62,14 +62,14 @@ void CCompiler::write(std::string path) {
         int blocks = 0;
 
         while (left > 0) {
-            if (m_iBytesSize > 124) {
-                std::string reslt = createHippyRecord(m_pBytes + at, 124);
+            if (m_iBytesSize > 0x10) {
+                std::string reslt = createHippyRecord(m_pBytes + at, 0x10);
                 for (auto& c : reslt) {
                     if (c == 0) break;
                     ofs << c;
                 }
-                at += 124;
-                left -= 124;
+                at += 0x10;
+                left -= 0x10;
             } else {
                 std::string reslt = createHippyRecord(m_pBytes + at, left);
                 for (auto& c : reslt) {
@@ -84,10 +84,11 @@ void CCompiler::write(std::string path) {
             blocks++;
         }
 
-        int checksumS5 = (compl ((0x03 + (uint8_t)(blocks >> 8) + (uint8_t)(blocks & 0xFF)) & 0xFF));
-        ofs << "S503" << toHexFill(blocks, 4) << checksumS5 << "\x0D\x0A";
+       // uint8_t checksumS5 = (compl ((0x03 + (uint8_t)(blocks >> 8) + (uint8_t)(blocks & 0xFF)) & 0xFF));
+      //  ofs << "S503" << toHexFill(blocks, 4) << toHexFill(checksumS5, 2) << "\x0D\x0A";
 
-        ofs << "S9030003F9\x0D\x0A";
+        uint8_t checksumS9 = compl((uint8_t)((3 + (m_iBytesSize >> 8) + (m_iBytesSize & 0xFF)) & 0xFF));
+        ofs << "S903" << toHexFill(m_iBytesSize, 4) << toHexFill(checksumS9, 2) << "\x0D\x0A";
         ofs.close();
     }
 }
@@ -102,7 +103,7 @@ std::string CCompiler::createHippyRecord(void* begin, size_t len) {
     result += toHexFill((uintptr_t)((uintptr_t)begin - (uintptr_t)m_pBytes), 4);
 
     // data
-    int checksum = 0;
+    int checksum = len + 3 + ((uintptr_t)begin - (uintptr_t)m_pBytes);
     for (size_t i = 0; i < len; ++i) {
         checksum += *((uint8_t*)begin + i);
         result += toHexFill(*((uint8_t*)begin + i), 2);
