@@ -518,6 +518,8 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
     // will compile the expression and put the result in ACC B, or A if resultAccumulator is 1
     compileExpression = [&](std::deque<SToken*>& TOKENS, int resultAccumulator = 0) -> bool {
         // operate from left to right
+        if (TOKENS.size() == 0)
+            return true;
 
         if (TOKENS.size() == 1) {
             if (!loadTokenToAccumulator(TOKENS[0], resultAccumulator ? true : false))
@@ -624,7 +626,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                     m_iBytesSize += 10;
                 } else if (OPERATION->raw == "==") {
                     BYTE bytes[] = {
-                        0x11,           /* CBA */
+                        0x10,           /* SBA */
                         0x27, 0x04,     /* BEQ +4 */
                         0x86, 0x00,     /* LDAA 0x00 */
                         0x20, 0x02,     /* BRA + 2 */
@@ -634,7 +636,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                     m_iBytesSize += 9;
                 } else if (OPERATION->raw == "!=") {
                     BYTE bytes[] = {
-                        0x11,           /* CBA */
+                        0x10,           /* SBA */
                         0x27, 0x04,     /* BEQ +4 */
                         0x86, 0x01,     /* LDAA 0x01 */
                         0x20, 0x02,     /* BRA + 2 */
@@ -829,7 +831,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                 i++;
                 m_iCurrentToken = i;
 
-                compileScope(parentStack, false);
+                compileScope(parentStack, ISMAIN);
 
                 i = m_iCurrentToken;
 
@@ -897,7 +899,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                     i += 2;
                     m_iCurrentToken = i;
 
-                    compileScope(parentStack, false);
+                    compileScope(parentStack, ISMAIN);
 
                     i = m_iCurrentToken;
                 }
@@ -936,7 +938,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                         i += 3;
                         m_iCurrentToken = i;
 
-                        compileScope(parentStack, false);
+                        compileScope(parentStack, ISMAIN);
 
                         i = m_iCurrentToken;
                     }
@@ -1028,10 +1030,10 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                 i++;
             }
 
-            compileExpression(tokensForExpr, 1);
-
             // if this is a dereference,
             if (TOKEN->raw[0] == '*') {
+                compileExpression(tokensForExpr, 0);
+
                 // store whatever we have to the memory pointed by the variable
                 BYTE bytes[] = {
                     0xEE, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset), /* LDX [our var] */
@@ -1043,6 +1045,8 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                 writeBytes(m_pBytes + m_iBytesSize, bytes, 7);
                 m_iBytesSize += 7;
             } else {
+                compileExpression(tokensForExpr, 1);
+
                 // copy value from A to the variable
                 BYTE bytes[] = {
                     0xA7, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset)
