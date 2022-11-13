@@ -31,7 +31,7 @@ private:
 
     void        initializeBinary(uint16_t start);
     bool        compileFunction(SToken* returnType, SToken* name, std::deque<std::pair<SToken*, SToken*>>& args);
-    bool        compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN = false);
+    bool        compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN = false, bool ISFUNC = false);
 
     void        writeBytes(void* begin, BYTE* bytes, size_t len);
 

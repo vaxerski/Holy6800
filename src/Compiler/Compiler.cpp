@@ -292,7 +292,7 @@ bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std
         stackVariables.push_back( { arg.first->raw + "@" + arg.second->raw, stackOffset++, true });
     }
 
-    if (!compileScope(stackVariables, ISMAIN))
+    if (!compileScope(stackVariables, ISMAIN, true))
         return false;
 
     m_pCurrentFunction = nullptr;
@@ -300,7 +300,7 @@ bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std
     return true;
 }
 
-bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
+bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, bool ISFUNC) {
     // start compiling
     const std::deque<SToken>& PTOKENS = g_pLiTokenizer->m_dTokens;
 
@@ -496,16 +496,15 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
             // dereference if needed
             if (token->raw[0] == '*') {
                 BYTE bytes[] = {
-                    0xEE, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset), /* LDX [our var] */
-                    accA ? 0x4F : 0x5F,                                                                /* CLR A/B*/
-                    accA ? 0xA6 : 0xE6, 0x00,                                                          /* LDA A/B 0,[X] */
-                    0x30,                                                                              /* TSX  - revert our damage to the IR */
+                    0xEE, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)), /* LDX [our var] */
+                    accA ? 0xA6 : 0xE6, 0x00,                                                                                                                                  /* LDA A/B 0,[X] */
+                    0x30,                                                                                                                                                      /* TSX  - revert our damage to the IR */
                 };
-                writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
-                m_iBytesSize += 6;
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 5);
+                m_iBytesSize += 5;
             } else {
                 BYTE bytes[] = {
-                    accA ? 0xA6 : 0xE6, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset)
+                    accA ? 0xA6 : 0xE6, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset))
                 };
                 writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
                 m_iBytesSize += 2;
@@ -701,21 +700,24 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
         m_iBytesSize += 1;
     };
 
-    if (ISMAIN) {
-        // init the IR
-        BYTE bytes[] = {
-            0xCE, 0xFF, 0xFF
-        };
-        writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
-        m_iBytesSize += 3;
-    } else {
-        // init the IR
-        BYTE bytes[] = {
-            0x30 /* TSX */
-        };
-        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-        m_iBytesSize += 1;
+    if (ISFUNC) {
+        if (ISMAIN) {
+            // init the IR
+            BYTE bytes[] = {
+                0xCE, 0xFF, 0xFF /* LDX 0xFFFF */
+            };
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
+            m_iBytesSize += 3;
+        } else {
+            // init the IR
+            BYTE bytes[] = {
+                0x30 /* TSX */
+            };
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+            m_iBytesSize += 1;
+        }
     }
+    
 
     for (size_t i = m_iCurrentToken; PTOKENS[i].type != TOKEN_CLOSE_CURLY; i++) {
         const auto TOKEN = &PTOKENS[i];
@@ -812,12 +814,12 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                 {
                     // check if acc A 0 and if so, exit
                     BYTE bytes[] = {
-                        0x81, 0x00,      /* CMP A #0 */
+                        0x4D,            /* TST A */
                         0x26, 0x03,      /* BNE [after] */
                         0x7E, 0xFF, 0xFF /* JMP [placeholder, after loop]*/
                     };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 7);
-                    m_iBytesSize += 7;
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
+                    m_iBytesSize += 6;
                 }
 
                 std::deque<SLocal> parentStack;
@@ -850,7 +852,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                         BYTE bytes[] = {
                             (uint8_t)(m_iBytesSize >> 8), (uint8_t)(m_iBytesSize & 0xFF), /* JMP [end] */
                         };
-                        writeBytes(m_pBytes + AFTERCHECKPOS + 5, bytes, 2);
+                        writeBytes(m_pBytes + AFTERCHECKPOS + 4, bytes, 2);
                     }
                 }
             } else if (TOKEN->raw == "if") {
@@ -879,12 +881,12 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                 {
                     // check if acc A 0 and if so, exit
                     BYTE bytes[] = {
-                        0x81, 0x00,      /* CMP A #0 */
+                        0x4D,            /* TST A */
                         0x26, 0x03,      /* BNE [after] */
-                        0x7E, 0xFF, 0xFF /* JMP [placeholder, after loop]*/
+                        0x7E, 0xFF, 0xFF /* JMP [placeholder, after if]*/
                     };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 7);
-                    m_iBytesSize += 7;
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
+                    m_iBytesSize += 6;
                 }
 
                 {
@@ -909,7 +911,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                     BYTE bytes[] = {
                         (uint8_t)(m_iBytesSize >> 8), (uint8_t)(m_iBytesSize & 0xFF), /* JMP [end] */
                     };
-                    writeBytes(m_pBytes + AFTERCHECKPOS + 5, bytes, 2);
+                    writeBytes(m_pBytes + AFTERCHECKPOS + 4, bytes, 2);
                 }
 
                 // check if this is an else
@@ -919,7 +921,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                     {
                         // check if acc A 0 and if so, exit
                         BYTE bytes[] = {
-                            0x7E, 0xFF, 0xFF /* JMP [placeholder, after loop]*/
+                            0x7E, 0xFF, 0xFF /* JMP [placeholder, after if]*/
                         };
                         writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
                         m_iBytesSize += 3;
@@ -1036,7 +1038,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
 
                 // store whatever we have to the memory pointed by the variable
                 BYTE bytes[] = {
-                    0xEE, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset), /* LDX [our var] */
+                    0xEE, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)), /* LDX [our var] */
                     0x4F,                                                                              /* CLR A*/
                     0x1B,                                                                              /* ABA */
                     0xA7, 0x00,                                                                        /* STA A 0,[X] */
@@ -1049,7 +1051,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
 
                 // copy value from A to the variable
                 BYTE bytes[] = {
-                    0xA7, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset)
+                    0xA7, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset))
                 };
                 writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
                 m_iBytesSize += 2;
