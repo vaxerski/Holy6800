@@ -435,7 +435,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
     auto loadTokenToAccumulator = [&](SToken* token, bool accA) -> bool {
         if (isNumber(token->raw, false)) {
             int CONSTANT = std::stoi(token->raw);
-            if (CONSTANT > INT8_MAX) {
+            if (CONSTANT > UINT8_MAX) {
                 Debug::log(WARN, "Constant overflow", "constant %i will overflow in the expression.", CONSTANT);
             }
 
