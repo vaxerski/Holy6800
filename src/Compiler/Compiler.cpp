@@ -1261,12 +1261,22 @@ void CCompiler::SOptimizer::optimizeBinary() {
                 //
                 // LDAA <something>
                 // ADDA #const
+                //
+                // furthermore if ADDA is +1 we can do an INC A
 
                 p->m_pBytes[NEXTBYTE] = 0x8B;
 
-                removeBytes(NEXTBYTE + 2, 1);
+                if (p->m_pBytes[NEXTBYTE + 1] == 0x01) {
+                    p->m_pBytes[NEXTBYTE] = 0x4C;
+                    removeBytes(NEXTBYTE + 1, 2);
+                } else {
+                    removeBytes(NEXTBYTE + 2, 1);
+                }
             }
         }
+
+        // TODO: make all JMP below 127 in one direction a BRA
+
     }
 
     memset(p->m_pBytes + p->m_iBytesSize, 0x00, removedBytes + 1);
