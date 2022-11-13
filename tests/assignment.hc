@@ -1,8 +1,8 @@
 U8 main() {
-    U8 addressA = 0;
-    U8 addressB = 01;
+    U8 addressLo = 0;
+    U8 addressHi = 01;
 
-    U8 test = addressB;
+    *addressLo = 10;
 
-    return test;
+    return 0;
 }

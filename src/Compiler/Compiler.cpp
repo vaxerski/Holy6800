@@ -628,6 +628,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                     m_iBytesSize += 9;
                 } else if (OPERATION->raw == "&") {
                     BYTE bytes[] = {
+                        // TODO: fix this for new stack-alloc
                         0x37,   /* PSH B */
                         0xB4, (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) & 0xFF), /* AND A [what we pushed] */
                         0x33 /* PUL B */
@@ -1057,8 +1058,8 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                 0xA7, 0x00, /* STA A 0,[X] */
                 0x30, /* TSX  - revert our damage to the IR */
             };
-            writeBytes(m_pBytes + m_iBytesSize, bytes, 8);
-            m_iBytesSize += 8;
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 7);
+            m_iBytesSize += 7;
         }
 
         m_iCurrentToken = i;
