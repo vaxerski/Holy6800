@@ -906,25 +906,27 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     i = m_iCurrentToken;
                 }
 
-                // overwrite the placeholder before
-                {
-                    BYTE bytes[] = {
-                        (uint8_t)(m_iBytesSize >> 8), (uint8_t)(m_iBytesSize & 0xFF), /* JMP [end] */
-                    };
-                    writeBytes(m_pBytes + AFTERCHECKPOS + 4, bytes, 2);
-                }
-
                 // check if this is an else
                 if (PTOKENS[i + 1].raw == "else") {
                     // first, add an unconditional jump for the above if
                     const uint16_t AFTERIFBLOCK = m_iBytesSize;
                     {
                         // check if acc A 0 and if so, exit
-                        BYTE bytes[] = {
-                            0x7E, 0xFF, 0xFF /* JMP [placeholder, after if]*/
-                        };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
-                        m_iBytesSize += 3;
+                        {
+                            BYTE bytes[] = {
+                                0x7E, 0xFF, 0xFF /* JMP [placeholder, after else]*/
+                            };
+                            writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
+                            m_iBytesSize += 3;
+                        }
+
+                        // overwrite the above placeholder to jump to the else block
+                        {
+                            BYTE bytes[] = {
+                                (uint8_t)(m_iBytesSize >> 8), (uint8_t)(m_iBytesSize & 0xFF), /* JMP [here] */
+                            };
+                            writeBytes(m_pBytes + AFTERCHECKPOS + 4, bytes, 2);
+                        }
                     }
 
                     // write the block
@@ -951,6 +953,14 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                             (uint8_t)(m_iBytesSize >> 8), (uint8_t)(m_iBytesSize & 0xFF), /* JMP [end] */
                         };
                         writeBytes(m_pBytes + AFTERIFBLOCK + 1, bytes, 2);
+                    }
+                } else {
+                    // overwrite the placeholder before to just jump here
+                    {
+                        BYTE bytes[] = {
+                            (uint8_t)(m_iBytesSize >> 8), (uint8_t)(m_iBytesSize & 0xFF), /* JMP [here] */
+                        };
+                        writeBytes(m_pBytes + AFTERCHECKPOS + 4, bytes, 2);
                     }
                 }
             }
