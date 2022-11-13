@@ -38,15 +38,6 @@ void CCompiler::write(std::string path) {
         path = path.substr(0, path.find_last_of('.'));
     }
 
-    // dump binary
-    Debug::log(LOG, "Dumping the binary:", "");
-    for (size_t i = 0; i < m_iBytesSize; ++i) {
-        if (i % 8 == 0)
-            std::cout << "\n";
-        std::cout << toHexFill(m_pBytes[i], 2) << ' ';
-    }
-    std::cout << "\n\n";
-
     std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
 
     if (m_bRawOutput) {
