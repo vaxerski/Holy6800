@@ -5,7 +5,7 @@ project(holy6800
 
 set(CMAKE_MESSAGE_LOG_LEVEL "STATUS")
 
-message(STATUS "Configuring hyprpicker!")
+message(STATUS "Configuring Holy6800!")
 
 # Get git info
 # hash and branch

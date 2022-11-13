@@ -3,13 +3,9 @@ U8 main() {
     U8 addressA = 0;
     U8 addressB = 01;
 
-    U8 counter = 255;
+    U8 counter = 255 & 4;
 
-    while (counter) {
-        addressA = addressA + 1;
-        counter = counter - 1;
-        *addressB = counter;
-    }
+    *addressB = counter;
 
     return 0;
 }

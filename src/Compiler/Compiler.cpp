@@ -628,21 +628,24 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
                     m_iBytesSize += 9;
                 } else if (OPERATION->raw == "&") {
                     BYTE bytes[] = {
-                        // TODO: fix this for new stack-alloc
-                        0x37,   /* PSH B */
-                        0xB4, (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) & 0xFF), /* AND A [what we pushed] */
-                        0x33 /* PUL B */
+                        0x37,           /* PSH B */
+                        0x09,           /* DEX */
+                        0xA4, 0x00,     /* ANDA 0,X */
+                        0x33,           /* PUL B */
+                        0x08            /* INX */
                     };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 5);
-                    m_iBytesSize += 5;
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
+                    m_iBytesSize += 6;
                 } else if (OPERATION->raw == "|") {
                     BYTE bytes[] = {
-                        0x37,   /* PSH B */
-                        0xBA, (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) >> 8), (uint8_t)((uint16_t)(0xFFFF - m_pCurrentFunction->stackOffset) & 0xFF), /* ORA A [what we pushed] */
-                        0x33 /* PUL B */
+                        0x37,       /* PSH B */
+                        0x09,       /* DEX */
+                        0xAA, 0x00, /* ORAA 0,X */
+                        0x33,       /* PUL B */
+                        0x08        /* INX */
                     };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 5);
-                    m_iBytesSize += 5;
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
+                    m_iBytesSize += 6;
                 }
 
                 i += 1; /* + 1 more in for */
