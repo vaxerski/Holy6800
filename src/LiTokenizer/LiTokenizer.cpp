@@ -58,6 +58,12 @@ void CLiTokenizer::tokenizeFile(std::string& in) {
         // colon / semicolon does too, but we also want it as a token. Additionally one-char operators.
         if (in[i] == ',' || in[i] == ';' || in[i] == '{' || in[i] == '(' || in[i] == ')' || in[i] == '}' || std::find_if(BUILTIN_OPERATORS.begin(), BUILTIN_OPERATORS.end(), [&](const char* other) { return other[0] == in[i]; }) != BUILTIN_OPERATORS.end()) {
             
+            // pointers are treated together
+            if (in[i] == '*' && ((i > 0 && !isspace(in[i - 1])) || (i + 1 < in.length() && !isspace(in[i + 1])))) {
+                currentArg += in[i];
+                continue;
+            }
+
             // check if it's not a long operator
             bool foundLong = false;
             for (auto& op : BUILTIN_OPERATORS) {

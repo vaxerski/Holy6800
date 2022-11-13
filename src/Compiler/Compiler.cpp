@@ -308,8 +308,12 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
     std::deque<SLocal> stackVariables;
 
     auto findVariable = [&](SToken* TOKEN) -> SLocal* {
+        
+        const auto LASTPTR = TOKEN->raw.find_last_of('*');
+        std::string tokenName = LASTPTR != std::string::npos ? TOKEN->raw.substr(LASTPTR + 1) : TOKEN->raw;
+
         for (auto& sv : stackVariables) {
-            if (sv.name.substr(sv.name.find_first_of('@') + 1).find(TOKEN->raw) == 0) {
+            if (sv.name.substr(sv.name.find_first_of('@') + 1).find(tokenName) == 0) {
                 // found the variable!
                 return &sv;
             }
@@ -317,7 +321,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
 
         // check inherited vars
         for (auto& sv : inheritedLocals) {
-            if (sv.name.substr(sv.name.find_first_of('@') + 1).find(TOKEN->raw) == 0) {
+            if (sv.name.substr(sv.name.find_first_of('@') + 1).find(tokenName) == 0) {
                 // found the variable!
                 return &sv;
             }
@@ -528,6 +532,8 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
             for (; i < TOKENS.size(); i++) {
                 const auto OPERATION = TOKENS[i];
                 const auto SECONDITEM = TOKENS[i + 1];
+
+                // check if we don't have a single arg op
 
                 if (OPERATION->type != TOKEN_OPERATOR) {
                     Debug::log(ERR, "Syntax error", "expected operator", TOKENS[0]->raw);
@@ -1014,55 +1020,26 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN) {
 
             compileExpression(tokensForExpr, 1);
 
-            // copy value from A to the variable
-            BYTE bytes[] = {
-                0xA7, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset)
-            };
-            writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
-            m_iBytesSize += 2;
-        } else if (TOKEN->type == TOKEN_OPERATOR && TOKEN->raw == "*") {
-            // dereferencing and assignment
-            if (i + 3 >= PTOKENS.size()) {
-                Debug::log(ERR, "Syntax error", "expected assignment after dereference", TOKEN->raw.c_str());
-                return false;
+            // if this is a dereference,
+            if (TOKEN->raw[0] == '*') {
+                // store whatever we have to the memory pointed by the variable
+                BYTE bytes[] = {
+                    0xEE, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset), /* LDX [our var] */
+                    0x4F,                                                                              /* CLR A*/
+                    0x1B,                                                                              /* ABA */
+                    0xA7, 0x00,                                                                        /* STA A 0,[X] */
+                    0x30,                                                                              /* TSX  - revert our damage to the IR */
+                };
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 7);
+                m_iBytesSize += 7;
+            } else {
+                // copy value from A to the variable
+                BYTE bytes[] = {
+                    0xA7, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset)
+                };
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                m_iBytesSize += 2;
             }
-
-            const auto PTOKENTODEREF = &PTOKENS[i + 1];
-            const auto pVariable = findVariable((SToken*)PTOKENTODEREF);
-
-            if (!pVariable) {
-                Debug::log(ERR, "Syntax error", "requested variable %s was not declared.", TOKEN->raw.c_str());
-                return false;
-            }
-
-            const auto OPERATION = &PTOKENS[i + 2];
-            if (OPERATION->raw != "=" || i + 2 >= PTOKENS.size()) {
-                Debug::log(ERR, "Syntax error", "expected assignment after variable", TOKEN->raw.c_str());
-                return false;
-            }
-
-            // calc expr to Acc B
-            i += 3;
-            std::deque<SToken*> tokensForExpr;
-            while (PTOKENS[i].type != TOKEN_SEMICOLON) {
-                tokensForExpr.emplace_back((SToken*)&PTOKENS[i]);
-                i++;
-            }
-
-            i--; // for will do ++
-
-            compileExpression(tokensForExpr, 0);
-
-            // store whatever we have to the memory pointed by the variable
-            BYTE bytes[] = {
-                0xEE, (uint8_t)(pVariable->funcParam ? pVariable->offset + 2 : pVariable->offset), /* LDX [our var] */
-                0x4F, /* CLR A*/
-                0x1B, /* ABA */
-                0xA7, 0x00, /* STA A 0,[X] */
-                0x30, /* TSX  - revert our damage to the IR */
-            };
-            writeBytes(m_pBytes + m_iBytesSize, bytes, 7);
-            m_iBytesSize += 7;
         }
 
         m_iCurrentToken = i;
