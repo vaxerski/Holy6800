@@ -120,7 +120,7 @@ bool CCompiler::compile() {
     // global -> we expect a function. No globals allowed.
     // TODO: maybe allow?
 
-    m_iBytesSize = 10; // this is because our header is 10 bytes.
+    m_iBytesSize = 6; // this is because our header is 6 bytes.
 
     const std::deque<SToken>& PTOKENS = g_pLiTokenizer->m_dTokens;
 
@@ -235,15 +235,11 @@ void CCompiler::initializeBinary(uint16_t mainStart) {
     // PC should start at 0x0
 
     BYTE bytes[] = {
-        0x8E, 0xFF, 0xFF,                       /* LDS #FFFF */
-        0x86, (uint8_t)(mainStart & 0xFF),      /* LDAA LO(mainStart)*/
-        0x36,                                   /* PSHA */
-        0x86, (uint8_t)(mainStart >> 8),        /* LDAA HI(mainStart)*/
-        0x36,                                   /* PSHA */
-        0x39                                    /* RTS */
+        0x8E, 0xFF, 0xFF,                                             /* LDS #FFFF */
+        0x7E, (uint8_t)(mainStart >> 8), (uint8_t)(mainStart & 0xFF)  /* JMP [start]*/
     };
 
-    writeBytes(m_pBytes, bytes, 10);
+    writeBytes(m_pBytes, bytes, 6);
 }
 
 bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std::pair<SToken*, SToken*>>& args) {
