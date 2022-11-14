@@ -21,6 +21,7 @@ struct SLocal {
     std::string name = "";
     uint8_t offset = 0;
     bool funcParam = false;
+    bool ptr = false;
 };
 
 class CCompiler {

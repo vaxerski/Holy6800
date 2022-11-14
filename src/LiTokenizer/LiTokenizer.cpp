@@ -122,7 +122,7 @@ void CLiTokenizer::tokenizeFile(std::string& in) {
             newToken.type = TOKEN_OPEN_CURLY;
         } else if (token == "}") {
             newToken.type = TOKEN_CLOSE_CURLY;
-        } else if (std::find_if(BUILTIN_TYPES.begin(), BUILTIN_TYPES.end(), [&](const char* other) { return other == token; }) != BUILTIN_TYPES.end()) {
+        } else if (std::find_if(BUILTIN_TYPES.begin(), BUILTIN_TYPES.end(), [&](const char* other) { return other == (token.back() == '*' ? token.substr(0, token.length() - 1) : token); }) != BUILTIN_TYPES.end()) {
             newToken.type = TOKEN_TYPE;
         } else if (std::find_if(KEYWORDS.begin(), KEYWORDS.end(), [&](const char* other) { return other == token; }) != KEYWORDS.end()) {
             newToken.type = TOKEN_KEYWORD;

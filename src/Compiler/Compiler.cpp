@@ -489,8 +489,12 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
 
             // dereference if needed
             if (token->raw[0] == '*') {
+                if (!pVariable->ptr) {
+                    Debug::log(WARN, "Warning", "Dereferencing a non-pointer. This will use 2 variables. I hope you know what you're doing!");
+                }
+
                 BYTE bytes[] = {
-                    0xEE, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)), /* LDX [our var] */
+                    0xEE, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset)), /* LDX [our var] */
                     accA ? 0xA6 : 0xE6, 0x00,                                                                                                                                  /* LDA A/B 0,[X] */
                     0x30,                                                                                                                                                      /* TSX  - revert our damage to the IR */
                 };
@@ -531,6 +535,11 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 const auto TOKEN = RPNTokens[i];
 
                 if (TOKEN[0]->type != TOKEN_OPERATOR) {
+                    // check if var for a warn
+                    if (const auto PVARIABLE = findVariable(TOKEN[0]); PVARIABLE && PVARIABLE->ptr) {
+                        Debug::log(WARN, "Warning", "Arithmetic on pointers only affects the lower byte.");
+                    }
+
                     // literal (or func). Load and push onto the stack.
                     // TODO: this is broken with functions for some reason.
                     if (!loadTokenToAccumulator(TOKEN[0], true))
@@ -743,8 +752,14 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             };
             writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
             m_iBytesSize += 1;
-
             m_pCurrentFunction->stackOffset -= 1;
+
+            if (it->ptr) {
+                // pop another time, it's 16 bit
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+                m_iBytesSize += 1;
+                m_pCurrentFunction->stackOffset -= 1;
+            }
         }
 
         // fix up the IR
@@ -1051,15 +1066,19 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 i++;
             }
 
-            // compile expr
-            if (!compileExpression(tokensForExpr, 0 /* Acc B will have the result */))
+            const bool PTR = TOKEN->raw[TOKEN->raw.length() - 1] == '*';
+
+            if (PTR && tokensForExpr.size() > 1) {
+                Debug::log(ERR, "Syntax error", "cannot use math to assign a pointer type");
+                return false;
+            } else if (!PTR && !compileExpression(tokensForExpr, 0 /* Acc B will have the result */))
                 return false;
 
             // register new local
-            m_pCurrentFunction->stackOffset += 1;
-            stackVariables.push_back(SLocal{TYPETOKEN->raw + "@" + NAMETOKEN->raw, (uint8_t)(m_pCurrentFunction->stackOffset - 1) /* first var at 0 */, false});
+            m_pCurrentFunction->stackOffset += PTR ? 2 : 1;
+            stackVariables.push_back(SLocal{TYPETOKEN->raw + "@" + NAMETOKEN->raw, (uint8_t)(m_pCurrentFunction->stackOffset - (PTR ? 2 : 1)) /* first var at 0 */, false, PTR});
 
-            {
+            if (!PTR) {
                 BYTE bytes[] {
                     0x37, /* PSH B */
                     0x30,  /* TSX */
@@ -1067,6 +1086,17 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
 
                 writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
                 m_iBytesSize += 2;
+            } else {
+                uint16_t address = toInt(tokensForExpr[0]->raw);
+                BYTE bytes[] = {
+                    0xC6, (uint8_t)(address & 0xFF), /* LDAB [Lo] */
+                    0x37, /* PSHB */
+                    0xC6, (uint8_t)(address >> 8), /* LDAB [Hi] */
+                    0x37, /* PSHB */
+                    0x30, /* TSX */
+                };
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 7);
+                m_iBytesSize += 7;
             }
 
             // finish
@@ -1102,9 +1132,13 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             if (TOKEN->raw[0] == '*') {
                 compileExpression(tokensForExpr, 0);
 
+                if (!pVariable->ptr) {
+                    Debug::log(WARN, "Warning", "Dereferencing a non-pointer. This will use 2 variables. I hope you know what you're doing!");
+                }
+
                 // store whatever we have to the memory pointed by the variable
                 BYTE bytes[] = {
-                    0xEE, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)), /* LDX [our var] */
+                    0xEE, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset)), /* LDX [our var] */
                     0xE7, 0x00,                                                                        /* STA B 0,[X] */
                     0x30,                                                                              /* TSX  - revert our damage to the IR */
                 };
