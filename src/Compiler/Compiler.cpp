@@ -59,14 +59,14 @@ void CCompiler::write(std::string path) {
         int blocks = 0;
 
         while (left > 0) {
-            if (m_iBytesSize > 0x10) {
-                std::string reslt = createHippyRecord(m_pBytes + at, 0x10);
+            if (m_iBytesSize > 0x70) {
+                std::string reslt = createHippyRecord(m_pBytes + at, 0x70);
                 for (auto& c : reslt) {
                     if (c == 0) break;
                     ofs << c;
                 }
-                at += 0x10;
-                left -= 0x10;
+                at += 0x70;
+                left -= 0x70;
             } else {
                 std::string reslt = createHippyRecord(m_pBytes + at, left);
                 for (auto& c : reslt) {
@@ -542,6 +542,8 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     };
                     writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
                     m_iBytesSize += 1;
+
+                    m_pCurrentFunction->stackOffset++;
                 } else {
                     // operator. pop last 2 values and do math. then push.
 
@@ -551,6 +553,8 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     };
                     writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
                     m_iBytesSize += 2;
+
+                    m_pCurrentFunction->stackOffset -= 2;
 
                     // perform the operation
                     if (TOKEN[0]->raw == "+") {
@@ -678,10 +682,13 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     // done. Push the result back onto the stack.
                     {
                         BYTE bytes[] = {
-                            0x36 /* PSHA */
+                            0x36, /* PSHA */
+                            0x30, /* TSX */
                         };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-                        m_iBytesSize += 1;
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                        m_iBytesSize += 2;
+
+                        m_pCurrentFunction->stackOffset++;
                     }
                 }
             }
@@ -694,6 +701,8 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             };
             writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
             m_iBytesSize += 2;
+
+            m_pCurrentFunction->stackOffset--;
         }
         
         return true;
@@ -1421,10 +1430,18 @@ bool CCompiler::performSYA(std::deque<SToken*>& input, std::vector<std::vector<S
         } else if (token->type == TOKEN_OPERATOR) {
             if (!operatorStack.empty() && operatorLowerPrecedence(token, operatorStack.back())) {
                 // pop the stack to the output
+                int topop = 0;
                 for (auto it = operatorStack.rbegin(); it != operatorStack.rend(); it++) {
+
+                    if (!operatorLowerPrecedence(token, *it))
+                        break;
+
                     output.push_back({*it});
+                    topop++;
                 }
-                operatorStack.clear();
+
+                for (int ii = 0; ii < topop; ii++)
+                    operatorStack.pop_back();
             }
 
             operatorStack.push_back(token);
