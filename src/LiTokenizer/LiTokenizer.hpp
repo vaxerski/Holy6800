@@ -22,7 +22,9 @@ inline const std::array<const char*, 8> KEYWORDS = {
     "struct"
 };
 
-inline const std::array<const char*, 13> BUILTIN_OPERATORS = {
+inline const std::array<const char*, 15> BUILTIN_OPERATORS = {
+    "~",
+    "!",
     "*",
     "/",
     "+",

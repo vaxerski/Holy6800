@@ -545,16 +545,28 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
 
                     m_pCurrentFunction->stackOffset++;
                 } else {
-                    // operator. pop last 2 values and do math. then push.
+                    // operator. pop last 2 / 1 values and do math. then push.
 
-                    BYTE bytes[] = {
-                        0x33, /* PUL B */
-                        0x32  /* PUL A*/
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
-                    m_iBytesSize += 2;
+                    if (TOKEN[0]->raw == "~" || TOKEN[0]->raw == "!") {
+                        // one-param operator. Only AccA
+                        BYTE bytes[] = {
+                            0x32  /* PUL A*/
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+                        m_iBytesSize += 1;
 
-                    m_pCurrentFunction->stackOffset -= 2;
+                        m_pCurrentFunction->stackOffset -= 1;
+                    } else {
+                        // two-param operator, accA and B.
+                        BYTE bytes[] = {
+                            0x33, /* PUL B */
+                            0x32  /* PUL A*/
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                        m_iBytesSize += 2;
+
+                        m_pCurrentFunction->stackOffset -= 2;
+                    }
 
                     // perform the operation
                     if (TOKEN[0]->raw == "+") {
@@ -634,20 +646,20 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     } else if (TOKEN[0]->raw == "&") {
                         BYTE bytes[] = {
                             0x37,       /* PSH B */
-                            0x09,       /* DEX */
+                            0x30,       /* TSX */
                             0xA4, 0x00, /* ANDA 0,X */
                             0x33,       /* PUL B */
-                            0x08        /* INX */
+                            0x30        /* TSX */
                         };
                         writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
                         m_iBytesSize += 6;
                     } else if (TOKEN[0]->raw == "|") {
                         BYTE bytes[] = {
                             0x37,       /* PSH B */
-                            0x09,       /* DEX */
+                            0x30,       /* TSX */
                             0xAA, 0x00, /* ORAA 0,X */
                             0x33,       /* PUL B */
-                            0x08        /* INX */
+                            0x30        /* TSX */
                         };
                         writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
                         m_iBytesSize += 6;
@@ -677,6 +689,21 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                         };
                         writeBytes(m_pBytes + m_iBytesSize, bytes, 11);
                         m_iBytesSize += 11;
+                    } else if (TOKEN[0]->raw == "~") {
+                        BYTE bytes[] = {
+                            0x40,       /* NEGA */
+                            0x4A        /* DEC A */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                        m_iBytesSize += 2;
+                    } else if (TOKEN[0]->raw == "!") {
+                        BYTE bytes[] = {
+                            0x40,       /* NEGA */
+                            0x4A,        /* DEC A */
+                            0x84, 0x01  /* ANDA #1 */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 4);
+                        m_iBytesSize += 4;
                     }
 
                     // done. Push the result back onto the stack.
@@ -760,11 +787,6 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             if (TOKEN->raw == "return") {
                 // end of function. Let's push the return value to A and do a RET.
                 // in the case of main, we do a WAI and bail out.
-
-                if (PTOKENS[i + 1].type != TOKEN_LITERAL || PTOKENS[i + 2].type != TOKEN_SEMICOLON) {
-                    Debug::log(ERR, "Invalid syntax", "Keyword return expects a literal");
-                    return false;
-                }
 
                 if (isNumber(PTOKENS[i + 1].raw, false)) {
                     // pop the locals before return
