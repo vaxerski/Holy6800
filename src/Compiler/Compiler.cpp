@@ -1082,9 +1082,12 @@ void CCompiler::SOptimizer::updateByteStartPositions() {
     for (size_t i = 0; i < p->m_iBytesSize; ++i) {
         byteStartPositions.emplace_back(i);
 
-        int a = p->m_pBytes[i];
+        const auto SIZE = OPERATIONS_SIZE[p->m_pBytes[i]];
 
-        i += OPERATIONSTOBYTES.at(a) - 1;  // +1 for ++i in for
+        if (SIZE == 0)
+            throw std::logic_error("tried to access size of invalid opcode!");
+
+        i += SIZE - 1;  // +1 for ++i in for
         continue;
     }
 }
@@ -1094,9 +1097,13 @@ void CCompiler::SOptimizer::fixAddressesAfterRemove(size_t where, size_t lenRemo
         // check opcode
         if (isRelative(p->m_pBytes[i])) {
             // check if it concerns us
-            const uint8_t OPCODELEN = OPERATIONSTOBYTES.at(p->m_pBytes[i]);
+            const auto OPCODELEN = OPERATIONS_SIZE[p->m_pBytes[i]];
+
+            if (OPCODELEN == 0)
+                throw std::logic_error("tried to access size of invalid opcode!");
+
             const bool LEFTSIDEOPCODE = i < where;
-            const bool LEFTSIDEDESTINATION = OPCODELEN == 2 ? i + (int8_t)p->m_pBytes[i + 1] < where : (uint16_t)(((uint16_t)p->m_pBytes[i + 1]) * 0x100 + p->m_pBytes[i + 2]) <= where;
+            const bool LEFTSIDEDESTINATION = OPCODELEN == 2 ? i + (int8_t)p->m_pBytes[i + 1] < where - 1 : (uint16_t)(((uint16_t)p->m_pBytes[i + 1]) * 0x100 + p->m_pBytes[i + 2]) < where - 1;
 
             if (LEFTSIDEDESTINATION == LEFTSIDEOPCODE) {
                 // no fix needed for this op if it's relative or we are on the left
@@ -1115,10 +1122,10 @@ void CCompiler::SOptimizer::fixAddressesAfterRemove(size_t where, size_t lenRemo
             if (OPCODELEN == 2) {
                 if (LEFTSIDEOPCODE) {
                     // right side dest, moved left, subtract len
-                    p->m_pBytes[i] -= lenRemoved;
+                    p->m_pBytes[i + 1] -= lenRemoved;
                 } else {
                     // left side dest, moved right, add len
-                    p->m_pBytes[i] += lenRemoved;
+                    p->m_pBytes[i + 1] += lenRemoved;
                 }
             } else {
                 // this is an absolute address
@@ -1136,8 +1143,6 @@ void CCompiler::SOptimizer::fixAddressesAfterRemove(size_t where, size_t lenRemo
             }
         }
     }
-
-    updateByteStartPositions();
 }
 
 size_t CCompiler::SOptimizer::getLastByteStart(size_t cur) {
@@ -1169,6 +1174,10 @@ bool CCompiler::SOptimizer::isRetWai(uint8_t byte) {
 
 bool CCompiler::SOptimizer::isPush(uint8_t byte) {
     return byte == 0x37 || byte == 0x36;
+};
+
+bool CCompiler::SOptimizer::isClear(uint8_t byte) {
+    return byte == 0x4F || byte == 0x5F;
 };
 
 // ignores 16-bit EXT LDAs
@@ -1232,10 +1241,10 @@ void CCompiler::SOptimizer::optimizeBinary() {
             // checks if we can remove the TSX that is above the LDA before the PSH
 
             const auto LASTBYTE = getLastByteStart(i);
-            const auto LASTBYTE2 = getLastByteStart(i - 2);
+            const auto LASTBYTE2 = getLastByteStart(LASTBYTE);
             const auto NEXTBYTE = getNextByteStart(i);
 
-            if (i - 4 > 0 && isLoad(p->m_pBytes[LASTBYTE]) && p->m_pBytes[LASTBYTE2] == 0x30 /* TSX */ && p->m_pBytes[NEXTBYTE] == 0x30 /* TSX */) {
+            if (i - 4 > 0 && (isLoad(p->m_pBytes[LASTBYTE]) || isClear(p->m_pBytes[LASTBYTE])) && p->m_pBytes[LASTBYTE2] == 0x30 /* TSX */ && p->m_pBytes[NEXTBYTE] == 0x30 /* TSX */) {
                 i = LASTBYTE2; // go back to the TSX place
 
                 // simplify the TSX
@@ -1264,19 +1273,48 @@ void CCompiler::SOptimizer::optimizeBinary() {
                 //
                 // furthermore if ADDA is +1 we can do an INC A
 
-                p->m_pBytes[NEXTBYTE] = 0x8B;
+                const auto NEXTBYTE3 = getNextByteStart(NEXTBYTE2);
 
-                if (p->m_pBytes[NEXTBYTE + 1] == 0x01) {
-                    p->m_pBytes[NEXTBYTE] = 0x4C;
-                    removeBytes(NEXTBYTE + 1, 2);
+                // simplify this to an in-place INC if possible (LDAA LDAB ABA STAA)
+                if ((p->m_pBytes[NEXTBYTE3] == 0xA7 || p->m_pBytes[NEXTBYTE3] == 0xE7) && (p->m_pBytes[i] == 0xA6 || p->m_pBytes[i] == 0xE6)) {
+                    
+
+                    // offset is in i + 1
+                    p->m_pBytes[i] = 0x6C; // INC data8,X
+                    // i + 1 is correct
+
+                    // rest are to be removed,
+                    removeBytes(i + 1, 5);
                 } else {
-                    removeBytes(NEXTBYTE + 2, 1);
+                    p->m_pBytes[NEXTBYTE] = 0x8B;
+
+                    if (p->m_pBytes[NEXTBYTE + 1] == 0x01) {
+                        p->m_pBytes[NEXTBYTE] = 0x4C;
+                        removeBytes(NEXTBYTE + 1, 2);
+                    } else {
+                        removeBytes(NEXTBYTE + 2, 1);
+                    }
                 }
             }
         }
 
-        // TODO: make all JMP below 127 in one direction a BRA
+        if (p->m_pBytes[i] == 0x7E /* JMP <addr16> */) {
+            // check if we can turn this into a BRA
+            uint16_t address = (uint16_t)((((uint16_t)p->m_pBytes[i + 1]) << 8) + p->m_pBytes[i + 2]);
 
+            if (abs(address - i) < 127) {
+                // yes we can!
+                p->m_pBytes[i] = 0x20; // BRA
+                p->m_pBytes[i + 1] = (int8_t)(address - i - 2 /* BRA adds 2 */); // offset
+                removeBytes(i + 2, 1);
+            }
+        }
+
+        if ((p->m_pBytes[i] == 0x86 || p->m_pBytes[i] == 0xC6) && p->m_pBytes[i + 1] == 0x00) {
+            // LDA A/B 0 -> CLR A/B
+            p->m_pBytes[i] = p->m_pBytes[i] == 0x86 ? 0x4F : 0x5F;
+            removeBytes(i + 1, 1);
+        }
     }
 
     memset(p->m_pBytes + p->m_iBytesSize, 0x00, removedBytes + 1);
