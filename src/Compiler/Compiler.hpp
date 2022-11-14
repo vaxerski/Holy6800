@@ -70,6 +70,7 @@ private:
         bool isPush(uint8_t byte);
         bool isClear(uint8_t byte);
         bool isLoad(uint8_t byte);
+        bool compareBytes(size_t where, std::string mask);
         void optimizeBinary();
     } optimizer;
 };

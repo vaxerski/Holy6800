@@ -617,42 +617,42 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                             0x11,       /* CBA */
                             0x23, 0x04, /* BLS +4 */
                             0x86, 0x01, /* LDAA 0x01 */
-                            0x20, 0x02, /* BRA + 2 */
-                            0x86, 0x00, /* LDAA 0x00 */
+                            0x20, 0x01, /* BRA + 1 */
+                            0x4F        /* CLRA */
                         };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
-                        m_iBytesSize += 9;
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 8);
+                        m_iBytesSize += 8;
                     } else if (TOKEN[0]->raw == "<") {
                         BYTE bytes[] = {
                             0x5A,       /* DECB #1 because BHI is > only */
                             0x11,       /* CBA */
-                            0x22, 0x04, /* BHI +4 */
-                            0x86, 0x01, /* LDAA 0x00 */
+                            0x22, 0x03, /* BHI +3 */
+                            0x4F,       /* CLRA */
                             0x20, 0x02, /* BRA + 2 */
                             0x86, 0x00, /* LDAA 0x01 */
                         };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 10);
-                        m_iBytesSize += 10;
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
+                        m_iBytesSize += 9;
                     } else if (TOKEN[0]->raw == "==") {
                         BYTE bytes[] = {
                             0x10,       /* SBA */
-                            0x27, 0x04, /* BEQ +4 */
-                            0x86, 0x00, /* LDAA 0x00 */
+                            0x27, 0x03, /* BEQ +3 */
+                            0x4F,       /* CLRA */
                             0x20, 0x02, /* BRA + 2 */
                             0x86, 0x01, /* LDAA 0x01 */
                         };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
-                        m_iBytesSize += 9;
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 8);
+                        m_iBytesSize += 8;
                     } else if (TOKEN[0]->raw == "!=") {
                         BYTE bytes[] = {
                             0x10,       /* SBA */
                             0x27, 0x04, /* BEQ +4 */
                             0x86, 0x01, /* LDAA 0x01 */
-                            0x20, 0x02, /* BRA + 2 */
-                            0x86, 0x00, /* LDAA 0x00 */
+                            0x20, 0x01, /* BRA + 1 */
+                            0x4F,       /* CLRA */
                         };
-                        writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
-                        m_iBytesSize += 9;
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 8);
+                        m_iBytesSize += 8;
                     } else if (TOKEN[0]->raw == "&") {
                         BYTE bytes[] = {
                             0x37,       /* PSH B */
@@ -1322,6 +1322,33 @@ bool CCompiler::SOptimizer::isLoad(uint8_t byte) {
     return byte == 0x86 || byte == 0x96 || byte == 0xA6 || byte == 0xC6 || byte == 0xD6 || byte == 0xE6;
 };
 
+bool CCompiler::SOptimizer::compareBytes(size_t where, std::string mask) {
+    std::vector<std::string> bytes;
+    size_t originalLen = mask.length();
+    size_t lastPos = 0;
+    for (size_t i = 0; i < originalLen; ++i) {
+        if (mask[i] == ' ') {
+            bytes.push_back(mask.substr(lastPos == 0 ? lastPos : lastPos + 1, i - (lastPos == 0 ? lastPos : lastPos + 1)));
+            lastPos = i;
+        }
+    }
+
+    bytes.push_back(mask.substr(lastPos + 1)); // last el
+
+    if (where + bytes.size() >= p->m_iBytesSize)
+        return false;
+
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        if (bytes[i] == "?")
+            continue;
+
+        if (std::stoi(bytes[i], nullptr, 16) != p->m_pBytes[where + i])
+            return false;
+    }
+
+    return true;
+}
+
 void CCompiler::SOptimizer::optimizeBinary() {
 
     std::chrono::system_clock::time_point begin = std::chrono::system_clock::now();
@@ -1344,6 +1371,15 @@ void CCompiler::SOptimizer::optimizeBinary() {
     };
 
     for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
+        // pass one
+        // pure redundancy removing
+
+        if (p->m_pBytes[i] == 0x30 /* TSX */ && i + 1 < p->m_iBytesSize && isRetWai(p->m_pBytes[i + 1])) {
+            /* TSX before RTS/WAI */
+
+            removeBytes(i, 1);
+        }
+
         if (p->m_pBytes[i] == 0x30 /* TSX */ && i + 1 < p->m_iBytesSize && p->m_pBytes[i + 1] == 0x30) {
             // multi-TSX optimization
 
@@ -1355,12 +1391,6 @@ void CCompiler::SOptimizer::optimizeBinary() {
             }
 
             removeBytes(i + 1, countTSX - 1);
-        }
-
-        if (p->m_pBytes[i] == 0x30 /* TSX */ && i + 1 < p->m_iBytesSize && isRetWai(p->m_pBytes[i + 1])) {
-            /* TSX before RTS/WAI */
-
-            removeBytes(i, 1);
         }
 
         if (p->m_pBytes[i] == 0x3E /* WAI */ && i + 1 < p->m_iBytesSize) {
@@ -1393,7 +1423,7 @@ void CCompiler::SOptimizer::optimizeBinary() {
             const auto NEXTBYTE = getNextByteStart(i);
 
             if (i - 4 > 0 && (isLoad(p->m_pBytes[LASTBYTE]) || isClear(p->m_pBytes[LASTBYTE])) && p->m_pBytes[LASTBYTE2] == 0x30 /* TSX */ && p->m_pBytes[NEXTBYTE] == 0x30 /* TSX */) {
-                i = LASTBYTE2; // go back to the TSX place
+                i = LASTBYTE2;  // go back to the TSX place
 
                 // simplify the TSX
                 removeBytes(i, 1);
@@ -1401,6 +1431,54 @@ void CCompiler::SOptimizer::optimizeBinary() {
                 // done
             }
         }
+
+        // if (compareBytes(i, "36 30 32 30")) {
+        //     // PSH A
+        //     // TSX
+        //     // PUL A
+        //     // TSX
+        //     // optimize out to TSX
+        //     p->m_pBytes[i] == 0x30; // TSX
+        //     removeBytes(i + 1, 3);
+        // }
+
+        if (i + 1 < p->m_iBytesSize && p->m_pBytes[i] == 0x36 /* PSHA */ && p->m_pBytes[i + 1] == 0x32 /* PULA */) {
+            // generated by the RPN notations.
+            // optimize out completely
+            removeBytes(i, 2);
+        }
+
+        if (compareBytes(i, "30 36 30 33 30")) {
+            /*
+            TSX
+            PSHA
+            TSX
+            PULB
+            TSX
+
+            -> 
+
+            TAB
+            TSX
+            */
+
+            p->m_pBytes[i] = 0x16;
+            p->m_pBytes[i + 1] = 0x30;
+
+            removeBytes(i + 2, 3);
+        }
+
+        if ((p->m_pBytes[i] == 0x86 || p->m_pBytes[i] == 0xC6) && p->m_pBytes[i + 1] == 0x00) {
+            // LDA A/B 0 -> CLR A/B
+            p->m_pBytes[i] = p->m_pBytes[i] == 0x86 ? 0x4F : 0x5F;
+            removeBytes(i + 1, 1);
+        }
+    }
+
+
+    for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
+
+        // pass 2 - logic simplifications
 
         if (isLoad(p->m_pBytes[i])) {
 
@@ -1446,48 +1524,117 @@ void CCompiler::SOptimizer::optimizeBinary() {
             }
         }
 
+        if (compareBytes(i, "A6 ? 36 86 ? 36 33 32 10 27 03 4F 20 02 86 01")) {
+            // simplify comparison to a constant
+            //
+            // LDAA $?,[X]
+            // PSHA
+            // LDAA #$constant
+            // PSHA
+            // PULB
+            // PULA
+            // SBA
+            // BEQ $3
+            // CLRA
+            // BRA $2
+            // LDAA #$1
+            //
+            // vvv
+            //
+            // LDAA $?,[X]
+            // SUBA #$constant
+            // NEGA
+            // DECA
+            // ANDA #1
+
+            // additionally, check if the thing later is an IF block, cuz then we can optimize even more
+            if (compareBytes(i + 16, "4D 26 02 20 ?")) {
+                // short if block
+                // +
+                // TSTA
+                // BNE $2
+                // BRA ?
+                //
+                // vvv
+                //
+                // LDAA $?,[X]
+                // SUBA #$constant
+                // BNE $3
+                // JMP <after> // this will be optimized if possible in a later pass
+
+                p->m_pBytes[i + 2] = 0x80;  // SUBA #const
+                p->m_pBytes[i + 3] = p->m_pBytes[i + 4];
+                p->m_pBytes[i + 4] = 0x26; // BNE $3
+                p->m_pBytes[i + 5] = 0x03;
+                p->m_pBytes[i + 6] = 0x7E; // JMP [addr]
+
+                uint8_t address = p->m_pBytes[i + 20] - i - 22;
+
+                p->m_pBytes[i + 7] = 0x00;
+                p->m_pBytes[i + 8] = address;
+
+                removeBytes(i + 9, 12);
+            } else if ((compareBytes(i + 16, "4D 26 03 7E ? ?"))) {
+                // long if block
+                // +
+                // TSTA
+                // BNE $3
+                // JMP ? ?
+                //
+                // vvv
+                //
+                // LDAA $?,[X]
+                // SUBA #$constant
+                // BNE $3
+                // JMP <after> // this will be optimized if possible in a later pass
+
+                p->m_pBytes[i + 2] = 0x80;  // SUBA #const
+                p->m_pBytes[i + 3] = p->m_pBytes[i + 4];
+                p->m_pBytes[i + 4] = 0x26;  // BNE $3
+                p->m_pBytes[i + 5] = 0x03;
+                p->m_pBytes[i + 6] = 0x7E;  // JMP [addr]
+
+                uint16_t address = (uint16_t)p->m_pBytes[i + 20] * 0x100 + p->m_pBytes[i + 21];
+
+                p->m_pBytes[i + 7] = (uint8_t)(address >> 8);
+                p->m_pBytes[i + 8] = (uint8_t)(address & 0xFF);
+
+                removeBytes(i + 9, 13);
+            } else {
+                // no if to be seen
+                p->m_pBytes[i + 2] = 0x80;  // SUBA #const
+                p->m_pBytes[i + 3] = p->m_pBytes[i + 4];
+                p->m_pBytes[i + 4] = 0x40;  // NEGA
+                p->m_pBytes[i + 5] = 0x4A; // DECA
+                p->m_pBytes[i + 6] = 0x84; // ANDA #1
+                p->m_pBytes[i + 7] = 0x01;
+
+                removeBytes(i + 8, 8);
+            }
+        }
+
+        // simplify multi-ifs
+
+    }
+
+    for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
+        // pass 3 - refining
+
         if (p->m_pBytes[i] == 0x7E /* JMP <addr16> */) {
             // check if we can turn this into a BRA
             uint16_t address = (uint16_t)((((uint16_t)p->m_pBytes[i + 1]) << 8) + p->m_pBytes[i + 2]);
 
             if (abs(address - i) < 127) {
                 // yes we can!
-                p->m_pBytes[i] = 0x20; // BRA
-                p->m_pBytes[i + 1] = (int8_t)(address - i - 2 /* BRA adds 2 */); // offset
+                p->m_pBytes[i] = 0x20;                                            // BRA
+                p->m_pBytes[i + 1] = (int8_t)(address - i - 2 /* BRA adds 2 */);  // offset
                 removeBytes(i + 2, 1);
             }
         }
 
-        if ((p->m_pBytes[i] == 0x86 || p->m_pBytes[i] == 0xC6) && p->m_pBytes[i + 1] == 0x00) {
-            // LDA A/B 0 -> CLR A/B
-            p->m_pBytes[i] = p->m_pBytes[i] == 0x86 ? 0x4F : 0x5F;
-            removeBytes(i + 1, 1);
-        }
-
-        if (i + 1 < p->m_iBytesSize && p->m_pBytes[i] == 0x36 /* PSHA */ && p->m_pBytes[i + 1] == 0x32 /* PULA */) {
-            // generated by the RPN notations.
-            // optimize out completely
+        if (compareBytes(i, "20 00")) {
+            // optimize out BRA #0
             removeBytes(i, 2);
-        }
-
-        if (i + 5 < p->m_iBytesSize && *(uint32_t*)(&p->m_pBytes[i]) == 0x30363033 && p->m_pBytes[i + 5] == 0x30) {
-            /*
-            TSX
-            PSHA
-            TSX
-            PULB
-            TSX
-
-            -> 
-
-            PULA
-            TSX
-            */
-
-            p->m_pBytes[i] = 0x32;
-            p->m_pBytes[i + 1] = 0x30;
-
-            removeBytes(i + 2, 3);            
         }
     }
 
