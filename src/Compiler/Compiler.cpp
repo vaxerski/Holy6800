@@ -659,6 +659,32 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     };
                     writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
                     m_iBytesSize += 6;
+                } else if (OPERATION->raw == "||") {
+                    // TODO: this can be optimized when I add RPN
+                    // && too
+                    BYTE bytes[] = {
+                        0x4D,       /* TSTA */
+                        0x26, 0x06, /* BNE +6 */
+                        0x5D,       /* TST B */
+                        0x26, 0x03, /* BNE +3 */
+                        0x4F,       /* CLRA */
+                        0x20, 0x02, /* BRA +2 */
+                        0x86, 0x01  /* LDAA #1 */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 11);
+                    m_iBytesSize += 11;
+                } else if (OPERATION->raw == "&&") {
+                    BYTE bytes[] = {
+                        0x4D,       /* TSTA */
+                        0x27, 0x07, /* BEQ +7 */
+                        0x5D,       /* TST B */
+                        0x27, 0x04, /* BEQ +4 */
+                        0x86, 0x01, /* LDAA #1 */
+                        0x20, 0x01, /* BRA +1 */
+                        0x4F        /* CLRA */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 11);
+                    m_iBytesSize += 11;
                 }
 
                 i += 1; /* + 1 more in for */
@@ -1227,12 +1253,23 @@ void CCompiler::SOptimizer::optimizeBinary() {
         }
 
         if (p->m_pBytes[i] == 0x3E /* WAI */ && i + 1 < p->m_iBytesSize) {
-            // stuff after WAI
-            size_t howMany = p->m_iBytesSize - i - 1;
+            // stuff after last WAI
 
-            memset(p->m_pBytes + i + 1, 0x00, howMany);
-            p->m_iBytesSize -= howMany;
-            removedBytes += howMany;
+            bool foundAnother = false;
+            for (size_t j = i; j < p->m_iBytesSize; j = getNextByteStart(j)) {
+                if (p->m_pBytes[j] == 0x3E) {
+                    foundAnother = true;
+                    break;
+                }
+            }
+
+            if (!foundAnother) {
+                size_t howMany = p->m_iBytesSize - i - 1;
+
+                memset(p->m_pBytes + i + 1, 0x00, howMany);
+                p->m_iBytesSize -= howMany;
+                removedBytes += howMany;
+            }
         }
 
         if (isPush(p->m_pBytes[i]) && i + 1 < p->m_iBytesSize) {
