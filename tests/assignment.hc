@@ -1,25 +1,16 @@
 
 U8 main() {
-    U8 addressLo = 0x00;
-    U8 addressHi = 0x02;
-    // text accepted will be at 0x200
-    // reading until an ascii NULL
-
+    U8* address = 0x0200;
     U8 foundWovels = 0;
 
-    while (*addressHi != 0) {
-        *addressHi = *addressHi & ~0x20; // convert to uppercase
+    while (*address != 0) {
+        *address = *address & ~0x20; // convert to uppercase
 
-        if (*addressHi == 65 || *addressHi == 69 || *addressHi == 73 || *addressHi == 79 || *addressHi == 85) {
-            foundWovels = foundWovels + 1;
+        if (*address == 65 || *address == 69 || *address == 73 || *address == 79 || *address == 85) {
+            foundWovels += 1;
         }
 
-        if (addressLo == 0xFF) {
-            addressLo = 0;
-            addressHi = addressHi + 1;
-        } else {
-            addressLo = addressLo + 1;
-        }
+        address += 1;
     }
 
     return foundWovels; // done

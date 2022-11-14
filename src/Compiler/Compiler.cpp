@@ -1115,7 +1115,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             }
 
             const auto OPERATION = &PTOKENS[i + 1];
-            if (OPERATION->raw != "=" || i + 2 >= PTOKENS.size()) {
+            if ((OPERATION->raw != "=" && OPERATION->raw != "-=" && OPERATION->raw != "+=") || i + 2 >= PTOKENS.size()) {
                 Debug::log(ERR, "Syntax error", "expected assignment after variable", TOKEN->raw.c_str());
                 return false;
             }
@@ -1139,20 +1139,61 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 // store whatever we have to the memory pointed by the variable
                 BYTE bytes[] = {
                     0xEE, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset)), /* LDX [our var] */
-                    0xE7, 0x00,                                                                        /* STA B 0,[X] */
-                    0x30,                                                                              /* TSX  - revert our damage to the IR */
                 };
-                writeBytes(m_pBytes + m_iBytesSize, bytes, 5);
-                m_iBytesSize += 5;
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                m_iBytesSize += 2;
+
+                if (OPERATION->raw == "=") {
+                    BYTE bytess[] = {
+                        0xE7, 0x00, /* STA B 0,[X] */
+                        0x30,       /* TSX  - revert our damage to the IR */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytess, 3);
+                    m_iBytesSize += 3;
+                } else if (OPERATION->raw == "+=") {
+                    BYTE bytess[] = {
+                        0xEB, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset)), /* ADDB [our var] */
+                        0xE7, 0x00, /* STA B 0,[X] */
+                        0x30,       /* TSX  - revert our damage to the IR */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytess, 5);
+                    m_iBytesSize += 5;
+                } else if (OPERATION->raw == "-=") {
+                    BYTE bytess[] = {
+                        0xE0, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - (pVariable->ptr ? 2 : 1) - pVariable->offset)), /* SUBB [our var] */
+                        0xE7, 0x00, /* STA B 0,[X] */
+                        0x30,       /* TSX  - revert our damage to the IR */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytess, 5);
+                    m_iBytesSize += 5;
+                }
             } else {
                 compileExpression(tokensForExpr, 1);
 
                 // copy value from A to the variable
-                BYTE bytes[] = {
-                    0xA7, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset))
-                };
-                writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
-                m_iBytesSize += 2;
+                if (OPERATION->raw == "=") {
+                    BYTE bytes[] = {
+                        0xA7, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)) /* STAA [our var] */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                    m_iBytesSize += 2;
+                } else if (OPERATION->raw == "+=") {
+                    BYTE bytes[] = {
+                        0xE6, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)), /* LDAB [our var] */
+                        0x1B, /* ABA */
+                        0xA7, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)) /* STAA [our var] */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 5);
+                    m_iBytesSize += 5;
+                } else if (OPERATION->raw == "+=") {
+                    BYTE bytes[] = {
+                        0xE6, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)), /* LDAB [our var] */
+                        0x10, /* SBA */
+                        0xA7, (uint8_t)(pVariable->funcParam ? (m_pCurrentFunction->stackOffset - 1 - pVariable->offset) + 2 : (m_pCurrentFunction->stackOffset - 1 - pVariable->offset)) /* STAA [our var] */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 5);
+                    m_iBytesSize += 5;
+                }
             }
         }
 
