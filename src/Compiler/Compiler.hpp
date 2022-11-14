@@ -36,6 +36,8 @@ private:
     bool        compileFunction(SToken* returnType, SToken* name, std::deque<std::pair<SToken*, SToken*>>& args);
     bool        compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN = false, bool ISFUNC = false);
 
+    bool        performSYA(std::deque<SToken*>& input, std::vector<std::vector<SToken*>>& output);
+
     void        optimizeBinary();
 
     void        writeBytes(void* begin, BYTE* bytes, size_t len);

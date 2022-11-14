@@ -518,187 +518,184 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             if (!loadTokenToAccumulator(TOKENS[0], resultAccumulator ? true : false))
                 return false;
         } else {
-            // do it sequentially. Get the next item and calculate the value to acc A
-            // acc A holds our "result"
-            const auto FIRSTTOKEN = TOKENS[0];
 
-            // first load the first token into acc A
-            if (!loadTokenToAccumulator(FIRSTTOKEN, true))
+            // shunting yard algorithm
+            // we return a vec of vecs, because functions will be contained that way.
+            std::vector<std::vector<SToken*>> RPNTokens;
+            if (!performSYA(TOKENS, RPNTokens))
                 return false;
 
-            size_t i = 1;
+            // now we have it in RPN. Calculating that is easy. We'll use the stack extensively, but who caares. It's easy that way.
 
-            if (TOKENS[i]->type == TOKEN_OPEN_PARENTHESIS) {
-                while (TOKENS[i]->type != TOKEN_CLOSE_PARENTHESIS)
-                    i++;
-                i++;
-            }
+            for (size_t i = 0; i < RPNTokens.size(); i++) {
+                const auto TOKEN = RPNTokens[i];
 
-            // now we enter a loop, parsing each next operator
-            // Acc A has the first item
-            for (; i < TOKENS.size(); i++) {
-                const auto OPERATION = TOKENS[i];
-                const auto SECONDITEM = TOKENS[i + 1];
+                if (TOKEN[0]->type != TOKEN_OPERATOR) {
+                    // literal (or func). Load and push onto the stack.
+                    // TODO: this is broken with functions for some reason.
+                    if (!loadTokenToAccumulator(TOKEN[0], true))
+                        return false;
 
-                if (OPERATION->type != TOKEN_OPERATOR) {
-                    Debug::log(ERR, "Syntax error", "expected operator", TOKENS[0]->raw);
-                    return false;
-                }
-
-                if (i + 1 >= TOKENS.size()) {
-                    Debug::log(ERR, "Syntax error", "malformed expression", TOKENS[0]->raw);
-                    return false;
-                }
-
-                // compile expression
-                // load the second arg to Acc B
-                // I know this could be optimized but I am lazy
-
-                if (!loadTokenToAccumulator(SECONDITEM, false))
-                    return false;
-
-                if (i + 2 < TOKENS.size() && TOKENS[i + 2]->type == TOKEN_OPEN_PARENTHESIS) {
-                    while (TOKENS[i]->type != TOKEN_CLOSE_PARENTHESIS)
-                        i++;
-                    i--;
-                }
-
-                // perform the operation
-                if (OPERATION->raw == "+") {
+                    // now, push A onto the stack
                     BYTE bytes[] = {
-                        0x1B
+                        0x36 /* PSHA */
                     };
                     writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
                     m_iBytesSize += 1;
-                } else if (OPERATION->raw == "-") {
-                    BYTE bytes[] = {
-                        0x10
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-                    m_iBytesSize += 1;
-                } else if (OPERATION->raw == "*") {
+                } else {
+                    // operator. pop last 2 values and do math. then push.
 
                     BYTE bytes[] = {
-                        0xC1, 0x00, /* CMPB #0 */
-                        0x26, 0x04, /* BNE [skip 0]*/
-                        0x86, 0x00, /* LDA #0 */
-                        0x20, 0x0C, /* skip 0: BRA [end] */
-                        0x5A,   /* DEC B (because * 1 is done)*/
-                        0x36,   /* PSH A*/
-                        0x30,   /* TSX */
-                        0xAB, 0x00, /* back: ADDA [the thing we pushed] */
-                        0x5A, /* DEC B*/
-                        0xC1, 0x00, /* CMPB #0 */
-                        0x26, (uint8_t)(-0x8), /* BNE [back]*/
-                        0x33, /* PULB (clean the stack)*/
-                        0x30, /* TSX */
-                        /* end */
+                        0x33, /* PUL B */
+                        0x32  /* PUL A*/
                     };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 20);
-                    m_iBytesSize += 20;
-                } else if (OPERATION->raw == "/") {
-                    Debug::log(ERR, "Syntax error", "/ not implemented");
-                } else if (OPERATION->raw == ">") {
-                    BYTE bytes[] = {
-                        0x11,           /* CBA */
-                        0x23, 0x04,     /* BLS +4 */
-                        0x86, 0x01,     /* LDAA 0x01 */
-                        0x20, 0x02,     /* BRA + 2 */
-                        0x86, 0x00,     /* LDAA 0x00 */
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
-                    m_iBytesSize += 9;
-                } else if (OPERATION->raw == "<") {
-                    BYTE bytes[] = {
-                        0x5A,           /* DECB #1 because BHI is > only */
-                        0x11,           /* CBA */
-                        0x22, 0x04,     /* BHI +4 */
-                        0x86, 0x01,     /* LDAA 0x00 */
-                        0x20, 0x02,     /* BRA + 2 */
-                        0x86, 0x00,     /* LDAA 0x01 */
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 10);
-                    m_iBytesSize += 10;
-                } else if (OPERATION->raw == "==") {
-                    BYTE bytes[] = {
-                        0x10,           /* SBA */
-                        0x27, 0x04,     /* BEQ +4 */
-                        0x86, 0x00,     /* LDAA 0x00 */
-                        0x20, 0x02,     /* BRA + 2 */
-                        0x86, 0x01,     /* LDAA 0x01 */
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
-                    m_iBytesSize += 9;
-                } else if (OPERATION->raw == "!=") {
-                    BYTE bytes[] = {
-                        0x10,           /* SBA */
-                        0x27, 0x04,     /* BEQ +4 */
-                        0x86, 0x01,     /* LDAA 0x01 */
-                        0x20, 0x02,     /* BRA + 2 */
-                        0x86, 0x00,     /* LDAA 0x00 */
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
-                    m_iBytesSize += 9;
-                } else if (OPERATION->raw == "&") {
-                    BYTE bytes[] = {
-                        0x37,           /* PSH B */
-                        0x09,           /* DEX */
-                        0xA4, 0x00,     /* ANDA 0,X */
-                        0x33,           /* PUL B */
-                        0x08            /* INX */
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
-                    m_iBytesSize += 6;
-                } else if (OPERATION->raw == "|") {
-                    BYTE bytes[] = {
-                        0x37,       /* PSH B */
-                        0x09,       /* DEX */
-                        0xAA, 0x00, /* ORAA 0,X */
-                        0x33,       /* PUL B */
-                        0x08        /* INX */
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
-                    m_iBytesSize += 6;
-                } else if (OPERATION->raw == "||") {
-                    // TODO: this can be optimized when I add RPN
-                    // && too
-                    BYTE bytes[] = {
-                        0x4D,       /* TSTA */
-                        0x26, 0x06, /* BNE +6 */
-                        0x5D,       /* TST B */
-                        0x26, 0x03, /* BNE +3 */
-                        0x4F,       /* CLRA */
-                        0x20, 0x02, /* BRA +2 */
-                        0x86, 0x01  /* LDAA #1 */
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 11);
-                    m_iBytesSize += 11;
-                } else if (OPERATION->raw == "&&") {
-                    BYTE bytes[] = {
-                        0x4D,       /* TSTA */
-                        0x27, 0x07, /* BEQ +7 */
-                        0x5D,       /* TST B */
-                        0x27, 0x04, /* BEQ +4 */
-                        0x86, 0x01, /* LDAA #1 */
-                        0x20, 0x01, /* BRA +1 */
-                        0x4F        /* CLRA */
-                    };
-                    writeBytes(m_pBytes + m_iBytesSize, bytes, 11);
-                    m_iBytesSize += 11;
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                    m_iBytesSize += 2;
+
+                    // perform the operation
+                    if (TOKEN[0]->raw == "+") {
+                        BYTE bytes[] = {
+                            0x1B /* ABA */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+                        m_iBytesSize += 1;
+                    } else if (TOKEN[0]->raw == "-") {
+                        BYTE bytes[] = {
+                            0x10 /* SBA */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+                        m_iBytesSize += 1;
+                    } else if (TOKEN[0]->raw == "*") {
+                        BYTE bytes[] = {
+                            0xC1, 0x00,            /* CMPB #0 */
+                            0x26, 0x04,            /* BNE [skip 0]*/
+                            0x86, 0x00,            /* LDA #0 */
+                            0x20, 0x0C,            /* skip 0: BRA [end] */
+                            0x5A,                  /* DEC B (because * 1 is done)*/
+                            0x36,                  /* PSH A*/
+                            0x30,                  /* TSX */
+                            0xAB, 0x00,            /* back: ADDA [the thing we pushed] */
+                            0x5A,                  /* DEC B*/
+                            0xC1, 0x00,            /* CMPB #0 */
+                            0x26, (uint8_t)(-0x8), /* BNE [back]*/
+                            0x33,                  /* PULB (clean the stack)*/
+                            0x30,                  /* TSX */
+                            /* end */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 20);
+                        m_iBytesSize += 20;
+                    } else if (TOKEN[0]->raw == "/") {
+                        Debug::log(ERR, "Syntax error", "/ not implemented");
+                    } else if (TOKEN[0]->raw == ">") {
+                        BYTE bytes[] = {
+                            0x11,       /* CBA */
+                            0x23, 0x04, /* BLS +4 */
+                            0x86, 0x01, /* LDAA 0x01 */
+                            0x20, 0x02, /* BRA + 2 */
+                            0x86, 0x00, /* LDAA 0x00 */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
+                        m_iBytesSize += 9;
+                    } else if (TOKEN[0]->raw == "<") {
+                        BYTE bytes[] = {
+                            0x5A,       /* DECB #1 because BHI is > only */
+                            0x11,       /* CBA */
+                            0x22, 0x04, /* BHI +4 */
+                            0x86, 0x01, /* LDAA 0x00 */
+                            0x20, 0x02, /* BRA + 2 */
+                            0x86, 0x00, /* LDAA 0x01 */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 10);
+                        m_iBytesSize += 10;
+                    } else if (TOKEN[0]->raw == "==") {
+                        BYTE bytes[] = {
+                            0x10,       /* SBA */
+                            0x27, 0x04, /* BEQ +4 */
+                            0x86, 0x00, /* LDAA 0x00 */
+                            0x20, 0x02, /* BRA + 2 */
+                            0x86, 0x01, /* LDAA 0x01 */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
+                        m_iBytesSize += 9;
+                    } else if (TOKEN[0]->raw == "!=") {
+                        BYTE bytes[] = {
+                            0x10,       /* SBA */
+                            0x27, 0x04, /* BEQ +4 */
+                            0x86, 0x01, /* LDAA 0x01 */
+                            0x20, 0x02, /* BRA + 2 */
+                            0x86, 0x00, /* LDAA 0x00 */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 9);
+                        m_iBytesSize += 9;
+                    } else if (TOKEN[0]->raw == "&") {
+                        BYTE bytes[] = {
+                            0x37,       /* PSH B */
+                            0x09,       /* DEX */
+                            0xA4, 0x00, /* ANDA 0,X */
+                            0x33,       /* PUL B */
+                            0x08        /* INX */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
+                        m_iBytesSize += 6;
+                    } else if (TOKEN[0]->raw == "|") {
+                        BYTE bytes[] = {
+                            0x37,       /* PSH B */
+                            0x09,       /* DEX */
+                            0xAA, 0x00, /* ORAA 0,X */
+                            0x33,       /* PUL B */
+                            0x08        /* INX */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 6);
+                        m_iBytesSize += 6;
+                    } else if (TOKEN[0]->raw == "||") {
+                        // TODO: this can be optimized when I add RPN
+                        // && too
+                        BYTE bytes[] = {
+                            0x4D,       /* TSTA */
+                            0x26, 0x06, /* BNE +6 */
+                            0x5D,       /* TST B */
+                            0x26, 0x03, /* BNE +3 */
+                            0x4F,       /* CLRA */
+                            0x20, 0x02, /* BRA +2 */
+                            0x86, 0x01  /* LDAA #1 */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 11);
+                        m_iBytesSize += 11;
+                    } else if (TOKEN[0]->raw == "&&") {
+                        BYTE bytes[] = {
+                            0x4D,       /* TSTA */
+                            0x27, 0x07, /* BEQ +7 */
+                            0x5D,       /* TST B */
+                            0x27, 0x04, /* BEQ +4 */
+                            0x86, 0x01, /* LDAA #1 */
+                            0x20, 0x01, /* BRA +1 */
+                            0x4F        /* CLRA */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 11);
+                        m_iBytesSize += 11;
+                    }
+
+                    // done. Push the result back onto the stack.
+                    {
+                        BYTE bytes[] = {
+                            0x36 /* PSHA */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
+                        m_iBytesSize += 1;
+                    }
                 }
-
-                i += 1; /* + 1 more in for */
             }
 
-            if (resultAccumulator == 0) {
-                BYTE bytes[] = {
-                    0x16 /* TAB */
-                };
-                writeBytes(m_pBytes + m_iBytesSize, bytes, 1);
-                m_iBytesSize += 1;
-            }
+            // done. Let's pop the final result to the desired Accumulator
+            // and fix the IR
+            BYTE bytes[] = {
+                resultAccumulator == 0 ? 0x33 : 0x32, /* PUL B/A */
+                0x30 /* TSX, might've gotten bad if there was multiplication */
+            };
+            writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+            m_iBytesSize += 2;
         }
-
+        
         return true;
     };
 
@@ -885,9 +882,15 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
 
                 i += 2;
                 std::deque<SToken*> tokensForExpr;
-                while (PTOKENS[i].type != TOKEN_CLOSE_PARENTHESIS) {
+                int parenthdiff = 1;
+                while (parenthdiff != 0) {
                     tokensForExpr.emplace_back((SToken*)&PTOKENS[i]);
                     i++;
+
+                    if (PTOKENS[i].type == TOKEN_OPEN_PARENTHESIS)
+                        parenthdiff++;
+                    else if (PTOKENS[i].type == TOKEN_CLOSE_PARENTHESIS)
+                        parenthdiff--;
 
                     if (i >= PTOKENS.size()) {
                         Debug::log(ERR, "Syntax error", "unclosed parentheses", TOKEN->raw.c_str());
@@ -1352,6 +1355,12 @@ void CCompiler::SOptimizer::optimizeBinary() {
             p->m_pBytes[i] = p->m_pBytes[i] == 0x86 ? 0x4F : 0x5F;
             removeBytes(i + 1, 1);
         }
+
+        if (i + 1 < p->m_iBytesSize && p->m_pBytes[i] == 0x36 /* PSHA */ && p->m_pBytes[i + 1] == 0x32 /* PULA */) {
+            // generated by the RPN notations.
+            // optimize out completely
+            removeBytes(i, 2);
+        }
     }
 
     memset(p->m_pBytes + p->m_iBytesSize, 0x00, removedBytes + 1);
@@ -1360,4 +1369,77 @@ void CCompiler::SOptimizer::optimizeBinary() {
                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - begin).count() / 1000.f,
                removedBytes,
                ((double)removedBytes / (double)(p->m_iBytesSize + removedBytes)) * 100.0);
+}
+
+bool CCompiler::performSYA(std::deque<SToken*>& input, std::vector<std::vector<SToken*>>& output) {
+
+    std::deque<SToken*> operatorStack;
+
+    auto operatorLowerPrecedence = [&] (SToken* what, SToken* from) -> bool {
+        return std::find(BUILTIN_OPERATORS.begin(), BUILTIN_OPERATORS.end(), what->raw) > std::find(BUILTIN_OPERATORS.begin(), BUILTIN_OPERATORS.end(), from->raw);
+    };
+
+    for (size_t i = 0; i < input.size(); ++i) {
+        SToken* token = input[i];
+
+        // check if this is a function with parentheses
+        if (i + 1 < input.size() && input[i + 1]->type == TOKEN_OPEN_PARENTHESIS) {
+            // gotem
+            std::vector<SToken*> toReturn;
+            toReturn.push_back(token);
+            toReturn.push_back(input[i + 1]);
+            int parenthdiff = 1;
+            size_t end = 0;
+            while(parenthdiff > 0) {
+                if (i + 2 + end >= input.size()) {
+                    Debug::log(ERR, "Syntax error", "Unclosed parenthesis");
+                    return false;
+                }
+
+                if (input[i + 2 + end]->type == TOKEN_OPEN_PARENTHESIS)
+                    parenthdiff++;
+                if (input[i + 2 + end]->type == TOKEN_CLOSE_PARENTHESIS)
+                    parenthdiff--;
+
+                toReturn.push_back(input[i + 2 + end]);
+
+                end++;
+            }
+
+            toReturn.push_back(input[i + 2 + end]);
+
+            // now we can return it
+            output.emplace_back(toReturn);
+
+            i = i + 2 + end;
+            continue;
+        } else if (token->type == TOKEN_LITERAL) {
+            std::vector<SToken*> toReturn;
+            toReturn.push_back(token);
+            output.emplace_back(toReturn);
+            continue;
+        } else if (token->type == TOKEN_OPERATOR) {
+            if (!operatorStack.empty() && operatorLowerPrecedence(token, operatorStack.back())) {
+                // pop the stack to the output
+                for (auto it = operatorStack.rbegin(); it != operatorStack.rend(); it++) {
+                    output.push_back({*it});
+                }
+                operatorStack.clear();
+            }
+
+            operatorStack.push_back(token);
+            continue;
+        }
+
+        Debug::log(ERR, "Syntax error", "Invalid syntax in expression, expected TOKEN_LITERAL, FUNCTION or TOKEN_OPERATOR");
+        return false;
+    }
+
+    // pop the operator stack
+    for (auto it = operatorStack.rbegin(); it != operatorStack.rend(); it++) {
+        output.push_back({*it});
+    }
+    operatorStack.clear();
+
+    return true;
 }

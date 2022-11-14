@@ -1,11 +1,7 @@
 
+
 U8 main() {
-    U8 addressLo = 0;
-    U8 addressHi = 0;
-
-    if (addressLo || addressHi) {
-        return 20;
-    }
-
-    return 10; // done
+    U8 val = 2 + 3 * 4;
+    val = val + 2 * 5 * 2;
+    return val;
 }

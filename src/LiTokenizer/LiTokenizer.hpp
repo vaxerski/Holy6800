@@ -23,19 +23,19 @@ inline const std::array<const char*, 8> KEYWORDS = {
 };
 
 inline const std::array<const char*, 13> BUILTIN_OPERATORS = {
-    "+",
-    "-",
-    "=",
     "*",
     "/",
+    "+",
+    "-",
+    "<",
+    ">",
     "!=",
     "==",
     "|",
     "&",
-    "<",
-    ">",
     "||",
-    "&&"
+    "&&",
+    "=",
 };
 
 enum eTokenType {
