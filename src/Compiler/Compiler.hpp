@@ -22,6 +22,9 @@ struct SLocal {
     uint8_t offset = 0;
     bool funcParam = false;
     bool ptr = false;
+
+    // for misc stuff
+    bool warnedPointerArithmetic = false;
 };
 
 class CCompiler {
