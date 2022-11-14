@@ -436,7 +436,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
 
     auto loadTokenToAccumulator = [&](SToken* token, bool accA) -> bool {
         if (isNumber(token->raw, false)) {
-            int CONSTANT = std::stoi(token->raw);
+            int CONSTANT = toInt(token->raw);
             if (CONSTANT > UINT8_MAX) {
                 Debug::log(WARN, "Constant overflow", "constant %i will overflow in the expression.", CONSTANT);
             }
@@ -771,7 +771,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     popAllLocals();
 
                     // easy, just use a constant
-                    int CONSTANT = std::stoi(PTOKENS[i + 1].raw);
+                    int CONSTANT = toInt(PTOKENS[i + 1].raw);
                     if (CONSTANT > UINT8_MAX) {
                         Debug::log(WARN, "Constant overflow", "The return constant %i will overflow in the return value.", CONSTANT);
                     }
