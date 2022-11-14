@@ -12,9 +12,13 @@ bool isNumber(const std::string& str, bool allowfloat) {
         return false;
 
     bool hex = false;
-    if (copy[0] == '0' && copy[1] == 'x') {
+    if (copy[0] == '0' && copy.length() > 1 && copy[1] == 'x') {
         hex = true;
         copy = copy.substr(2);
+    }
+
+    if (copy[0] == '\'' && copy.length() == 3 && copy[2] == '\'') {
+        return true; // character
     }
 
     bool point = !allowfloat;
@@ -53,6 +57,9 @@ int toInt(const std::string& str) {
 
     if (str[0] == '0' && str[1] == 'x')
         return std::stoi(str.substr(2), nullptr, 16);
+
+    if (str[0] == '\'' && str.length() == 3 && str[2] == '\'')
+        return (int)str[1];
 
     return std::stoi(str);
 }
