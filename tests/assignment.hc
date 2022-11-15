@@ -6,8 +6,14 @@ U8 main() {
     while (*address != 0) {
         *address = *address & ~0x20; // convert to uppercase
 
-        if (*address == 65 || *address == 69 || *address == 73 || *address == 79 || *address == 85) {
-            foundWovels += 1;
+        switch (*address) {
+            case 65:
+            case 69:
+            case 73:
+            case 79:
+            case 85: {
+                foundWovels += 1;
+            }
         }
 
         address += 1;

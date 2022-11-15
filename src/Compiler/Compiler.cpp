@@ -406,7 +406,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
         // jump to subroutine
         {
             BYTE bytes[] = {
-                0xBD, (uint8_t)((uint16_t)FUNCIT->binaryBegin >> 8), (uint8_t)((uint16_t)FUNCIT->binaryBegin & 0xFF)
+                0xBD, (uint8_t)((uint16_t)FUNCIT->binaryBegin >> 8), (uint8_t)((uint16_t)FUNCIT->binaryBegin & 0xFF) /* JSR [addr] */
             };
             writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
             m_iBytesSize += 3;
@@ -1481,23 +1481,15 @@ void CCompiler::SOptimizer::fixAddressesAfterRemove(size_t where, size_t lenRemo
                 throw std::logic_error("tried to access size of invalid opcode!");
 
             const bool LEFTSIDEOPCODE = i < where;
-            const bool LEFTSIDEDESTINATION = OPCODELEN == 2 ? i + (int8_t)p->m_pBytes[i + 1] < where - 1 : (uint16_t)(((uint16_t)p->m_pBytes[i + 1]) * 0x100 + p->m_pBytes[i + 2]) < where - 1;
-
-            if (LEFTSIDEDESTINATION == LEFTSIDEOPCODE) {
-                // no fix needed for this op if it's relative or we are on the left
-                if (OPCODELEN == 2 || LEFTSIDEDESTINATION)
-                    continue;
-
-                // otherwise, shift to the left
-                uint16_t address = (uint16_t)((((uint16_t)p->m_pBytes[i + 1]) << 8) + p->m_pBytes[i + 2]);
-                address -= lenRemoved;
-                p->m_pBytes[i + 1] = (uint8_t)(address >> 8);
-                p->m_pBytes[i + 2] = (uint8_t)(address & 0xFF);
-                continue;
-            }
+            const bool LEFTSIDEDESTINATION = OPCODELEN == 2 ?
+                        i + (int8_t)p->m_pBytes[i + 1] + 2 <= where :
+                        (uint16_t)((((uint16_t)p->m_pBytes[i + 1]) << 8) + p->m_pBytes[i + 2]) <= where;
 
             // we need to fix this op
             if (OPCODELEN == 2) {
+                if (LEFTSIDEDESTINATION == LEFTSIDEOPCODE)
+                    continue;
+
                 if (LEFTSIDEOPCODE) {
                     // right side dest, moved left, subtract len
                     p->m_pBytes[i + 1] -= lenRemoved;
@@ -1508,7 +1500,7 @@ void CCompiler::SOptimizer::fixAddressesAfterRemove(size_t where, size_t lenRemo
             } else {
                 // this is an absolute address
                 uint16_t address = (uint16_t)((((uint16_t)p->m_pBytes[i + 1]) << 8) + p->m_pBytes[i + 2]);
-                if (LEFTSIDEOPCODE) {
+                if (!LEFTSIDEDESTINATION) {
                     // right side dest, moved left, subtract len
                     address -= lenRemoved;
 
