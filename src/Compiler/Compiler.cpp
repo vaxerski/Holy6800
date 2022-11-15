@@ -1043,7 +1043,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 }
             } else if (TOKEN->raw == "break") {
 
-                if (!currentScopeInfo.isWhile) {
+                if (!currentScopeInfo.isWhile && !currentScopeInfo.isSwitch) {
                     Debug::log(ERR, "Syntax error", "Unexpected token break at pos %i", i);
                     return false;
                 }
@@ -1051,11 +1051,22 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 // pop all locals
                 popAllLocals();
 
-                BYTE bytes[] = {
-                    0x7E, (uint8_t)(currentScopeInfo.whileBreakJump >> 8), (uint8_t)(currentScopeInfo.whileBreakJump & 0xFF) /* JMP [end] */
-                };
-                writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
-                m_iBytesSize += 3;
+                if (currentScopeInfo.isSwitch) {
+                    if (currentScopeInfo.isSwitch) {
+                        BYTE bytes[] = {
+                            0x20, 0xFF /* BRA [end] */
+                        };
+                        writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                        m_iBytesSize += 2;
+                        currentScopeInfo.breakAddresses.push_back(m_iBytesSize - 1);
+                    }
+                } else {
+                    BYTE bytes[] = {
+                        0x7E, (uint8_t)(currentScopeInfo.whileBreakJump >> 8), (uint8_t)(currentScopeInfo.whileBreakJump & 0xFF) /* JMP [end] */
+                    };
+                    writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
+                    m_iBytesSize += 3;
+                }
             } else if (TOKEN->raw == "continue") {
                 
                 if (!currentScopeInfo.isWhile) {
@@ -1072,6 +1083,196 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
 
                 writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
                 m_iBytesSize += 3;
+            } else if (TOKEN->raw == "switch") {
+                if (PTOKENS[i + 1].type != TOKEN_OPEN_PARENTHESIS) {
+                    Debug::log(ERR, "Syntax error", "expected expression in () after switch");
+                    return false;
+                }
+
+                i += 2;
+                std::deque<SToken*> tokensForExpr;
+                int parenthdiff = 1;
+                while (parenthdiff != 0) {
+                    tokensForExpr.emplace_back((SToken*)&PTOKENS[i]);
+                    i++;
+
+                    if (PTOKENS[i].type == TOKEN_OPEN_PARENTHESIS)
+                        parenthdiff++;
+                    else if (PTOKENS[i].type == TOKEN_CLOSE_PARENTHESIS)
+                        parenthdiff--;
+
+                    if (i >= PTOKENS.size()) {
+                        Debug::log(ERR, "Syntax error", "unclosed parentheses near %s", PTOKENS[i - 2].raw.c_str());
+                        return false;
+                    }
+                }
+
+                compileExpression(tokensForExpr, 1);
+
+                // great. Now we have the result in ACCA.
+                int stage = 0;
+                std::vector<size_t> endPositions;
+                std::vector<size_t> nextCasePositions;
+                std::vector<size_t> passPositions;
+
+                i++;
+                
+                if (PTOKENS[i].type != TOKEN_OPEN_CURLY) {
+                    Debug::log(ERR, "Syntax error", "case requires a scope, got %s", PTOKENS[i].raw.c_str());
+                    return false;
+                }
+
+                while (PTOKENS[i + 1].type != TOKEN_CLOSE_CURLY) {
+                    i++;
+
+                    if (i >= PTOKENS.size()) {
+                        Debug::log(ERR, "Syntax error", "unclosed brackets near %s", PTOKENS[i - 2].raw.c_str());
+                        return false;
+                    }
+
+                    switch (stage) {
+                        case 0:
+                        {
+                            // stage 0 is CASE
+
+                            if (PTOKENS[i].raw != "case") {
+                                Debug::log(ERR, "Syntax error", "expected case in switch, got %s", PTOKENS[i].raw.c_str());
+                                return false;
+                            }
+
+                            stage++;
+                            break;
+                        }
+                        case 1:
+                        {
+                            // stage 1 is constant
+                            if (!isNumber(PTOKENS[i].raw)) {
+                                Debug::log(ERR, "Syntax error", "expected constant in switch case, got %s", PTOKENS[i].raw.c_str());
+                                return false;
+                            }
+
+                            // fix all lingering next case positions
+                            for (auto& ncp : nextCasePositions) {
+                                m_pBytes[ncp] = (uint8_t)(m_iBytesSize - ncp - 1);
+                            }
+                            nextCasePositions.clear();
+
+                            BYTE bytes[] = {
+                                0x81, toInt(PTOKENS[i].raw),
+                                0x27, 0xFF /* placeholder */
+                            };
+                            writeBytes(m_pBytes + m_iBytesSize, bytes, 4);
+                            m_iBytesSize += 4;
+                            passPositions.push_back(m_iBytesSize - 1);
+
+                            if (PTOKENS[i + 1].raw != ":") {
+                                Debug::log(ERR, "Syntax error", "expected constant followed by : in switch case, got %s", PTOKENS[i + 1].raw.c_str());
+                                return false;
+                            }
+
+                            i++;
+                            stage++;
+                            break;
+                        }
+                        case 2:
+                        {
+                            // this is the body. We might also skip right back to case.
+                            if (PTOKENS[i].raw == "case") {
+                                stage--;
+                                break;
+                            }
+
+                            // coolio, body.
+                            if (PTOKENS[i].type != TOKEN_OPEN_CURLY) {
+                                Debug::log(ERR, "Syntax error", "case bodies must be enclosed with {}, got %s", PTOKENS[i].raw.c_str());
+                                return false;
+                            }
+
+                            // hello, if we didn't pass, we dippin'.
+                            {
+                                BYTE bytes[] = {
+                                    0x20, 0xFF /* BRA [end] */
+                                };
+                                writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                                m_iBytesSize += 2;
+
+                                nextCasePositions.push_back(m_iBytesSize - 1);
+                            }
+
+                            // fix all pass positions
+                            for (auto& pp : passPositions) {
+                                m_pBytes[pp] = (uint8_t)(m_iBytesSize - pp - 1);
+                            }
+                            passPositions.clear();
+
+                            std::deque<SLocal> parentStack;
+                            for (auto& il : inheritedLocals) {
+                                parentStack.emplace_back(il);
+                            }
+                            for (auto& il : stackVariables) {
+                                parentStack.emplace_back(il);
+                            }
+
+                            // save A
+                            // TODO: this might trash the stack. Although it's of no concern technically, since it will only happen with main.
+                            {
+                                BYTE bytes[] = {
+                                    0x36, /* PSHA */
+                                    0x30 /* TSX */
+                                };
+                                writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                                m_iBytesSize += 2;
+                                m_pCurrentFunction->stackOffset++;
+                            }
+
+                            currentScopeInfo.isSwitch = true;
+                            m_iCurrentToken = i;
+
+                            compileScope(parentStack, ISMAIN);
+
+                            i = m_iCurrentToken;
+                            currentScopeInfo.isSwitch = false;
+
+                            // restore A
+                            {
+                                BYTE bytes[] = {
+                                    0x32, /* PULA */
+                                    0x30  /* TSX */
+                                };
+                                writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                                m_iBytesSize += 2;
+                                m_pCurrentFunction->stackOffset--;
+                            }
+
+                            for (auto& ba : currentScopeInfo.breakAddresses) {
+                                endPositions.push_back(ba);
+                            }
+                            currentScopeInfo.breakAddresses.clear();
+
+                            BYTE bytes[] = {
+                                0x20, 0xFF /* BRA [end] */
+                            };
+                            writeBytes(m_pBytes + m_iBytesSize, bytes, 2);
+                            m_iBytesSize += 2;
+
+                            endPositions.push_back(m_iBytesSize - 1);
+
+                            stage = 0;
+                        }
+
+                    }
+                }
+
+                m_iCurrentToken = i + 1;
+                i += 1;
+
+                // end by fixing all end positions
+                for (auto& ba : endPositions) {
+                    m_pBytes[ba] = (uint8_t)(m_iBytesSize - ba - 1);
+                }
+                for (auto& ba : nextCasePositions) {
+                    m_pBytes[ba] = (uint8_t)(m_iBytesSize - ba - 1);
+                }
             }
         } else if (TOKEN->type == TOKEN_TYPE) {
             // probably a variable.

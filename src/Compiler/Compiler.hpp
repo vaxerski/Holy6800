@@ -62,6 +62,9 @@ private:
         bool isWhile = false;
         size_t whileCondPlace = 0;
         size_t whileBreakJump = 0;
+
+        bool isSwitch = false;
+        std::vector<size_t> breakAddresses;
     } currentScopeInfo;
 
     struct SOptimizer {

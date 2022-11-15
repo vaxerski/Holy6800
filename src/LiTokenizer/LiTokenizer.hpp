@@ -11,7 +11,7 @@ inline const std::array<const char*, 3> BUILTIN_TYPES = {
     "I8"
 };
 
-inline const std::array<const char*, 10> KEYWORDS = {
+inline const std::array<const char*, 12> KEYWORDS = {
     "const",
     "static",
     "for",
@@ -21,10 +21,12 @@ inline const std::array<const char*, 10> KEYWORDS = {
     "return",
     "struct",
     "break",
-    "continue"
+    "continue",
+    "case",
+    "switch"
 };
 
-inline const std::array<const char*, 17> BUILTIN_OPERATORS = {
+inline const std::array<const char*, 18> BUILTIN_OPERATORS = {
     "~",
     "!",
     "*",
@@ -42,6 +44,7 @@ inline const std::array<const char*, 17> BUILTIN_OPERATORS = {
     "=",
     "+=",
     "-=",
+    ":"
 };
 
 enum eTokenType {

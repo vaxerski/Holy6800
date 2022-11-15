@@ -1,18 +1,23 @@
 
 U8 main() {
-    U8 test = 0;
+    U8* address = 0x0200;
+    U8 foundWovels = 0;
 
-    while (1) {
-        test += 1;
+    while (*address != 0) {
+        *address = *address & ~0x20; // convert to uppercase
 
-        if (test == 2) {
-            continue;
+        switch (*address) {
+            case 65:
+            case 69:
+            case 73:
+            case 79:
+            case 85: {
+                foundWovels += 1;
+            }
         }
 
-        if (test > 2) {
-            break;
-        }
+        address += 1;
     }
 
-    return test; // done
+    return foundWovels; // done
 }
