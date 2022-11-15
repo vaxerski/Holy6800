@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <ranges>
+#include "../helpers/MiscFunctions.hpp"
 
 CLiTokenizer::CLiTokenizer(std::string path) {
     // load the file to a string
@@ -106,7 +107,8 @@ void CLiTokenizer::tokenizeFile(std::string& in) {
     Debug::log(LOG, "Tokenization stage 1 done.", "Amount of tokens: %d", tokens.size());
 
     // now, we identify the tokens
-    for (auto& token : tokens) {
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        std::string& token = tokens[i];
         SToken newToken;
         newToken.raw = token;
 
@@ -127,7 +129,15 @@ void CLiTokenizer::tokenizeFile(std::string& in) {
         } else if (std::find_if(KEYWORDS.begin(), KEYWORDS.end(), [&](const char* other) { return other == token; }) != KEYWORDS.end()) {
             newToken.type = TOKEN_KEYWORD;
         } else if (std::find_if(BUILTIN_OPERATORS.begin(), BUILTIN_OPERATORS.end(), [&](const char* other) { return other == token; }) != BUILTIN_OPERATORS.end()) {
-            newToken.type = TOKEN_OPERATOR;
+            // check ~ on constant optimizations
+            if (token == "~" && i + 1 < tokens.size() && isNumber(tokens[i + 1])) {
+                // trolololo
+                newToken.type = TOKEN_LITERAL;
+                newToken.raw = std::to_string(~toInt(tokens[i + 1]));
+                i++;
+            } else {
+                newToken.type = TOKEN_OPERATOR;
+            }
         } else if (std::ranges::all_of(token.begin(), token.end(), [] (char other) { return isspace(other); })) {
             continue;
         } else {
