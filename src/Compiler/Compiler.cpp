@@ -1560,6 +1560,16 @@ bool CCompiler::SOptimizer::isLoad(uint8_t byte) {
     return byte == 0x86 || byte == 0x96 || byte == 0xA6 || byte == 0xC6 || byte == 0xD6 || byte == 0xE6;
 };
 
+bool CCompiler::SOptimizer::altersIX(uint8_t byte) {
+    return byte == 0x32 || byte == 0x33 || byte == 0x36 || byte == 0x37 || byte == 0xEE;
+}
+
+bool CCompiler::SOptimizer::accessesIX(uint8_t byte) {
+    return byte == 0xEE || byte == 0xE6 || byte == 0xE7 || byte == 0xA6 || byte == 0xA7 || byte == 0xAB || byte == 0xEB || byte == 0xA4
+        || byte == 0xE4 || byte == 0xA1 || byte == 0xE1 || byte == 0x6A || byte == 0xA8 || byte == 0xE8 || byte == 0x6C || byte == 0x6E
+        || byte == 0x60 || byte == 0xAA || byte == 0xEA || byte == 0xA0 || byte == 0xE0;
+}
+
 bool CCompiler::SOptimizer::compareBytes(size_t where, std::string mask) {
     std::vector<std::string> bytes;
     size_t originalLen = mask.length();
@@ -1851,8 +1861,44 @@ void CCompiler::SOptimizer::optimizeBinary() {
             }
         }
 
-        // simplify multi-ifs
+        if (const auto A = compareBytes(i, "36 4F 36 33 32"); A || compareBytes(i, "36 86 ? 36 33 32")) {
+            // PSHA
+            // CLRA / LDAA #const
+            // PSHA
+            // PULB
+            // PULA
+            //
+            // into
+            //
+            // CLRB / LDAB #const
 
+            if (A) {
+                p->m_pBytes[i] = 0x5f; // CLRB
+                removeBytes(i + 1, 4);
+            } else {
+                p->m_pBytes[i] = 0xC6; // LDAB #const
+                p->m_pBytes[i + 1] = p->m_pBytes[i + 2];
+                removeBytes(i + 2, 4);
+            }
+        }
+
+        if (const auto A = compareBytes(i, "86 ? E6 ? 1B"); A) {
+            // TODO: same with B, same with SUB
+            // LDAA #$const
+            // LDAB $const,[X]
+            // ABA
+            //
+            // into
+            // LDAA $const,[X]
+            // ADDA #$const
+
+            const auto NUM = p->m_pBytes[i + 1];
+            p->m_pBytes[i] = 0xA6; // LDAA
+            p->m_pBytes[i + 1] = p->m_pBytes[i + 3];
+            p->m_pBytes[i + 2] = 0x8B; // ADDA
+            p->m_pBytes[i + 3] = NUM;
+            removeBytes(i + 4, 1);
+        }
     }
 
     for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
@@ -1873,6 +1919,31 @@ void CCompiler::SOptimizer::optimizeBinary() {
         if (compareBytes(i, "20 00")) {
             // optimize out BRA #0
             removeBytes(i, 2);
+        }
+
+        if (compareBytes(i, "36 30 32 30")) {
+            // PUSHA TSX PULA TSX
+            p->m_pBytes[i] = 0x30;
+            removeBytes(i + 1, 2);
+        }
+
+        if (compareBytes(i, "8B 01")) { // ADDA #$1
+            // we can make this an INCA
+            p->m_pBytes[i] = 0x4C;
+            removeBytes(i + 1, 1);
+
+            i = getLastByteStart(getLastByteStart(i)); // move 2 bytes back for the next thing to possibly troll the entire world
+        }
+
+        if (compareBytes(i, "A6 ? 4C A7 02")) {
+            // LDAA $const,[x]
+            // INCA
+            // STAA $const,[x]
+            // AKA var += 1
+            // AKA INC $const,[X]
+
+            p->m_pBytes[i] = 0x6C; // INC data,[X]
+            removeBytes(i + 2, 3);
         }
     }
 
