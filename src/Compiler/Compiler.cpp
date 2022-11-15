@@ -899,7 +899,13 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 i++;
                 m_iCurrentToken = i;
 
+                currentScopeInfo.isWhile = true;
+                currentScopeInfo.whileCondPlace = CHECKPOS;
+                currentScopeInfo.whileBreakJump = AFTERCHECKPOS + 3;
+
                 compileScope(parentStack, ISMAIN);
+
+                currentScopeInfo.isWhile = false;
 
                 i = m_iCurrentToken;
 
@@ -1035,6 +1041,37 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                         writeBytes(m_pBytes + AFTERCHECKPOS + 4, bytes, 2);
                     }
                 }
+            } else if (TOKEN->raw == "break") {
+
+                if (!currentScopeInfo.isWhile) {
+                    Debug::log(ERR, "Syntax error", "Unexpected token break at pos %i", i);
+                    return false;
+                }
+
+                // pop all locals
+                popAllLocals();
+
+                BYTE bytes[] = {
+                    0x7E, (uint8_t)(currentScopeInfo.whileBreakJump >> 8), (uint8_t)(currentScopeInfo.whileBreakJump & 0xFF) /* JMP [end] */
+                };
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
+                m_iBytesSize += 3;
+            } else if (TOKEN->raw == "continue") {
+                
+                if (!currentScopeInfo.isWhile) {
+                    Debug::log(ERR, "Syntax error", "Unexpected token continue at pos %i", i);
+                    return false;
+                }
+
+                // pop all locals
+                popAllLocals();
+
+                BYTE bytes[] = {
+                    0x7E, (uint8_t)(currentScopeInfo.whileCondPlace >> 8), (uint8_t)(currentScopeInfo.whileCondPlace & 0xFF) /* JMP [end] */
+                };
+
+                writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
+                m_iBytesSize += 3;
             }
         } else if (TOKEN->type == TOKEN_TYPE) {
             // probably a variable.

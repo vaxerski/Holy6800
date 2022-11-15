@@ -11,7 +11,7 @@ inline const std::array<const char*, 3> BUILTIN_TYPES = {
     "I8"
 };
 
-inline const std::array<const char*, 8> KEYWORDS = {
+inline const std::array<const char*, 10> KEYWORDS = {
     "const",
     "static",
     "for",
@@ -19,7 +19,9 @@ inline const std::array<const char*, 8> KEYWORDS = {
     "if",
     "else",
     "return",
-    "struct"
+    "struct",
+    "break",
+    "continue"
 };
 
 inline const std::array<const char*, 17> BUILTIN_OPERATORS = {

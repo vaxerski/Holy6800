@@ -58,6 +58,12 @@ private:
 
     SFunction*  m_pCurrentFunction = nullptr;
 
+    struct SCurrentScopeInfo {
+        bool isWhile = false;
+        size_t whileCondPlace = 0;
+        size_t whileBreakJump = 0;
+    } currentScopeInfo;
+
     struct SOptimizer {
         CCompiler* p;
         std::vector<uint16_t> byteStartPositions;
