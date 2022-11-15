@@ -75,12 +75,16 @@ private:
         size_t getNextByteStart(size_t cur);
         size_t getLastByteStart(size_t cur);
         bool isRelative(uint8_t byte);
+        bool isBranch(uint8_t byte);
         bool isRetWai(uint8_t byte);
         bool isPush(uint8_t byte);
+        bool isPull(uint8_t byte);
         bool isClear(uint8_t byte);
         bool isLoad(uint8_t byte);
         bool altersIX(uint8_t byte);
         bool accessesIX(uint8_t byte);
+        bool readsFromIX(uint8_t byte);
+        bool accessesA(uint8_t byte);
         bool compareBytes(size_t where, std::string mask);
         void optimizeBinary();
     } optimizer;

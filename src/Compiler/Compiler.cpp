@@ -774,11 +774,14 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
     if (ISFUNC) {
         if (ISMAIN) {
             // init the IR
-            BYTE bytes[] = {
-                0xCE, 0xFF, 0xFF /* LDX 0xFFFF */
-            };
-            writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
-            m_iBytesSize += 3;
+            //BYTE bytes[] = {
+           //     0xCE, 0xFF, 0xFF /* LDX 0xFFFF */
+            //};
+            //writeBytes(m_pBytes + m_iBytesSize, bytes, 3);
+            //m_iBytesSize += 3;
+            // Actually, redundant as fuck!
+            // Since if we use the stack, the PSH will force a TSX, which will set this for us,
+            // and if we don't, then we don't use the stack, hence no IR needed!
         } else {
             // init the IR
             BYTE bytes[] = {
@@ -1540,25 +1543,33 @@ size_t CCompiler::SOptimizer::getNextByteStart(size_t cur) {
 
 bool CCompiler::SOptimizer::isRelative(uint8_t byte) {
     // todo: this is horrible
-    return byte == 0x24 || byte == 0x25 || byte == 0x27 || byte == 0x2C || byte == 0x2E || byte == 0x22 || byte == 0x2F || byte == 0x23 || byte == 0x2D || byte == 0x2D || byte == 0x2B || byte == 0x26 || byte == 0x2A || byte == 0x20 || byte == 0x8D || byte == 0x28 || byte == 0x29 || byte == 0x6E || byte == 0x7E || byte == 0xAD || byte == 0xBD;
-};
+    return isBranch(byte) || byte == 0x6E || byte == 0x7E || byte == 0xAD || byte == 0xBD;
+}
+
+bool CCompiler::SOptimizer::isBranch(uint8_t byte) {
+    return byte == 0x24 || byte == 0x25 || byte == 0x27 || byte == 0x2C || byte == 0x2E || byte == 0x22 || byte == 0x2F || byte == 0x23 || byte == 0x2D || byte == 0x2D || byte == 0x2B || byte == 0x26 || byte == 0x2A || byte == 0x20 || byte == 0x8D || byte == 0x28 || byte == 0x29;
+}
 
 bool CCompiler::SOptimizer::isRetWai(uint8_t byte) {
     return byte == 0x3E || byte == 0x39;
-};
+}
 
 bool CCompiler::SOptimizer::isPush(uint8_t byte) {
     return byte == 0x37 || byte == 0x36;
-};
+}
+
+bool CCompiler::SOptimizer::isPull(uint8_t byte) {
+    return byte == 0x32 || byte == 0x33;
+}
 
 bool CCompiler::SOptimizer::isClear(uint8_t byte) {
     return byte == 0x4F || byte == 0x5F;
-};
+}
 
 // ignores 16-bit EXT LDAs
 bool CCompiler::SOptimizer::isLoad(uint8_t byte) {
     return byte == 0x86 || byte == 0x96 || byte == 0xA6 || byte == 0xC6 || byte == 0xD6 || byte == 0xE6;
-};
+}
 
 bool CCompiler::SOptimizer::altersIX(uint8_t byte) {
     return byte == 0x32 || byte == 0x33 || byte == 0x36 || byte == 0x37 || byte == 0xEE;
@@ -1568,6 +1579,14 @@ bool CCompiler::SOptimizer::accessesIX(uint8_t byte) {
     return byte == 0xEE || byte == 0xE6 || byte == 0xE7 || byte == 0xA6 || byte == 0xA7 || byte == 0xAB || byte == 0xEB || byte == 0xA4
         || byte == 0xE4 || byte == 0xA1 || byte == 0xE1 || byte == 0x6A || byte == 0xA8 || byte == 0xE8 || byte == 0x6C || byte == 0x6E
         || byte == 0x60 || byte == 0xAA || byte == 0xEA || byte == 0xA0 || byte == 0xE0;
+}
+
+bool CCompiler::SOptimizer::readsFromIX(uint8_t byte) {
+    return byte == 0xAB || byte == 0xEB || byte == 0xA4 || byte == 0xE4 || byte == 0x6F || byte == 0xA1 || byte == 0xE1 || byte == 0x63 || byte == 0xAC || byte == 0x6A || byte == 0xA8 || byte == 0xE8 || byte == 0x6C || byte == 0x6E || byte == 0xAD || byte == 0xA6 || byte == 0xE6 || byte == 0x60 || byte == 0x64 || byte == 0xAA || byte == 0xEA || byte == 0xA7 || byte == 0xE7 || byte == 0xAF || byte == 0xA0 || byte == 0xE0 || byte == 0x6D;
+}
+
+bool CCompiler::SOptimizer::accessesA(uint8_t byte) {
+    return byte == 0x8B || byte == 0x9B || byte == 0xAB || byte == 0xBB || byte == 0x84 || byte == 0x94 || byte == 0xA4 || byte == 0xB4 || byte == 0x1B || byte == 0x84 || byte == 0x94 || byte == 0xA4 || byte == 0xB4 || byte == 0x11 || byte == 0x4F || byte == 0x81 || byte == 0x91 || byte == 0xA1 || byte == 0xB1 || byte == 0x4A || byte == 0x88 || byte == 0x98 || byte == 0xA8 || byte == 0xB8 || byte == 0x4C || byte == 0x86 || byte == 0x96 || byte == 0xA6 || byte == 0xB6 || byte == 0x44 || byte == 0x54 || byte == 0x40 || byte == 0x50 || byte == 0x81 || byte == 0x91 || byte == 0xAA || byte == 0xBA || byte == 0x3 || byte == 0x32 || byte == 0x49 || byte == 0x46 || byte == 0x97 || byte == 0xA7 || byte == 0xB7 || byte == 0x80 || byte == 0x90 || byte == 0xA0 || byte == 0xB0 || byte == 0x16 || byte == 0x17 || byte == 0x4D;
 }
 
 bool CCompiler::SOptimizer::compareBytes(size_t where, std::string mask) {
@@ -1901,53 +1920,199 @@ void CCompiler::SOptimizer::optimizeBinary() {
         }
     }
 
-    for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
-        // pass 3 - refining
+    while(1) {
+        int refined = 0;
+        for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
+            // pass 3 - refining.
+            // refine until nothing is left.
 
-        if (p->m_pBytes[i] == 0x7E /* JMP <addr16> */) {
-            // check if we can turn this into a BRA
-            uint16_t address = (uint16_t)((((uint16_t)p->m_pBytes[i + 1]) << 8) + p->m_pBytes[i + 2]);
+            if (p->m_pBytes[i] == 0x7E /* JMP <addr16> */) {
+                // check if we can turn this into a BRA
+                uint16_t address = (uint16_t)((((uint16_t)p->m_pBytes[i + 1]) << 8) + p->m_pBytes[i + 2]);
 
-            if (abs(address - i) < 127) {
-                // yes we can!
-                p->m_pBytes[i] = 0x20;                                            // BRA
-                p->m_pBytes[i + 1] = (int8_t)(address - i - 2 /* BRA adds 2 */);  // offset
+                if (abs(address - i) < 127) {
+                    // yes we can!
+                    p->m_pBytes[i] = 0x20;                                            // BRA
+                    p->m_pBytes[i + 1] = (int8_t)(address - i - 2 /* BRA adds 2 */);  // offset
+                    removeBytes(i + 2, 1);
+                }
+
+                refined++;
+            }
+
+            if (compareBytes(i, "20 00")) {
+                // optimize out BRA #0
+                removeBytes(i, 2);
+
+                refined++;
+            }
+
+            if (compareBytes(i, "36 30 32 30")) {
+                // PUSHA TSX PULA TSX
+                p->m_pBytes[i] = 0x30;
+                removeBytes(i + 1, 2);
+
+                refined++;
+            }
+
+            if (compareBytes(i, "8B 01")) {  // ADDA #$1
+                // we can make this an INCA
+                p->m_pBytes[i] = 0x4C;
+                removeBytes(i + 1, 1);
+
+                i = getLastByteStart(getLastByteStart(i));  // move 2 bytes back for the next thing to possibly troll the entire world
+
+                refined++;
+            }
+
+            if (compareBytes(i, "A6 ? 4C A7 ?") && p->m_pBytes[i + 1] == p->m_pBytes[i + 4] /* ?s are equal */) {
+                // LDAA $const,[x]
+                // INCA
+                // STAA $const,[x]
+                // AKA var += 1
+                // AKA INC $const,[X]
+
+                p->m_pBytes[i] = 0x6C;  // INC data,[X]
+                removeBytes(i + 2, 3);
+
+                refined++;
+            }
+
+            if (compareBytes(i, "30 30")) {
+                // remove double TSX
+                removeBytes(i, 1);
+
+                refined++;
+            }
+
+            if (compareBytes(i, "4F 30 4D")) {
+                // CLRA
+                // TSX // TODO: verify "accessesA"
+                // TSTA
                 removeBytes(i + 2, 1);
+
+                refined++;
+            }
+
+            if (compareBytes(i, "5F 10") && isBranch(p->m_pBytes[i + 2])) {
+                // CLRB
+                // SBA
+                // <some branch>
+                // vvv
+                // TSTA
+                p->m_pBytes[i] = 0x4D;
+                removeBytes(i + 1, 1);
+
+                refined++;
+            }
+
+            if (const auto A = compareBytes(i, "A6 ? 30 4D"); A || compareBytes(i, "A6 ? 4D")) {
+                // todo: ignore the 30 some other way
+                // LDAA $const,[x]
+                // opt: TSX
+                // TSTA
+                // 
+                // No need for TSTA, LDAA already sets the flags
+                if (A) {
+                    removeBytes(i + 3, 1);
+                } else {
+                    removeBytes(i + 2, 1);
+                }
+
+                refined++;
+            }
+
+            if (compareBytes(i, "30 6C ? 30")) {
+                // TODO:
+                // write a proper fucking TSX optimizer... walk through possible paths and find redundant TSX-es
+
+                removeBytes(i + 3, 1);
+
+                refined++;
+            }
+
+            if (compareBytes(i, "EE ? E7 ? 30 EE ? A6 ?") && p->m_pBytes[i + 1] == p->m_pBytes[i + 6] && p->m_pBytes[i + 3] == p->m_pBytes[i + 8]) {
+                // TODO: ignore the TSX or the above
+
+                // LDX $const,[x]
+                // STAB $const2,[x]
+                // TSX
+                // LDX $const,[X]
+                // LDAA $const2,[x]
+                // into a
+                // LDX $const,[x]
+                // STAB $const2,[x]
+                // TBA
+                // TSX
+                // (generated by the expr parser)
+
+                p->m_pBytes[i + 4] = 0x30;
+                p->m_pBytes[i + 5] = 0x17;
+                removeBytes(i + 6, 3);
+
+                refined++;
+            }
+
+            if (compareBytes(i, "36 30")) {
+                // potentially unsafe...? haven't tested much
+
+                // switch optimization. If we don't alter A, we can remove the safeguards
+                // PSHA
+                // TSX
+                // ...
+                // PULA
+                // TSX
+
+                size_t lenOfBlock = 0;
+                int stackOff = 1;
+                bool fail = false; // fail either on A accesses or unpredictable IX
+                std::vector<size_t> toFixIX;
+
+                while (stackOff != 0) {
+                    if (isPush(p->m_pBytes[i + 2 + lenOfBlock]))
+                        stackOff++;
+                    else if (isPull(p->m_pBytes[i + 2 + lenOfBlock]))
+                        stackOff--;
+                    else if (accessesA(p->m_pBytes[i + 2 + lenOfBlock])) {
+                        fail = true;
+                        break;
+                    }
+
+                    if (accessesIX(p->m_pBytes[i + 2 + lenOfBlock])) {
+                        if (readsFromIX(p->m_pBytes[i + 2 + lenOfBlock])) {
+                            toFixIX.push_back(i + 2 + lenOfBlock + 1);
+                        } else {
+                            fail = true;
+                            break;
+                        }
+                    }
+
+                    lenOfBlock++;
+                }
+
+                lenOfBlock--;
+
+                // found the end
+                if (!fail) {
+                    // fix all IX accesses (one val less on the stackie)
+                    for (auto& tofix : toFixIX) {
+                        p->m_pBytes[tofix] -= 1;
+                    }
+
+                    // we can optimize out the safeguard
+                    removeBytes(i + 2 + lenOfBlock, 2);
+                    removeBytes(i, 2);
+                }
+
+                refined++;
             }
         }
 
-        if (compareBytes(i, "20 00")) {
-            // optimize out BRA #0
-            removeBytes(i, 2);
-        }
-
-        if (compareBytes(i, "36 30 32 30")) {
-            // PUSHA TSX PULA TSX
-            p->m_pBytes[i] = 0x30;
-            removeBytes(i + 1, 2);
-        }
-
-        if (compareBytes(i, "8B 01")) { // ADDA #$1
-            // we can make this an INCA
-            p->m_pBytes[i] = 0x4C;
-            removeBytes(i + 1, 1);
-
-            i = getLastByteStart(getLastByteStart(i)); // move 2 bytes back for the next thing to possibly troll the entire world
-        }
-
-        if (compareBytes(i, "A6 ? 4C A7 02")) {
-            // LDAA $const,[x]
-            // INCA
-            // STAA $const,[x]
-            // AKA var += 1
-            // AKA INC $const,[X]
-
-            p->m_pBytes[i] = 0x6C; // INC data,[X]
-            removeBytes(i + 2, 3);
-        }
+        if (!refined)
+            break;
     }
 
-    memset(p->m_pBytes + p->m_iBytesSize, 0x00, removedBytes + 1);
+    memset(p->m_pBytes + p->m_iBytesSize - 1, 0x00, removedBytes + 1);
 
     Debug::log(LOG, "Optimization complete.", "Elapsed: %.2fms. Bytes optimized out: %i (-%.2f%)",
                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - begin).count() / 1000.f,
