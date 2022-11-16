@@ -11,6 +11,7 @@ typedef uint8_t BYTE;
 struct SFunction {
     std::string signature = "";
     size_t binaryBegin;
+    size_t length;
     std::string returnType = "";
 
     // only for parsing
@@ -67,6 +68,20 @@ private:
         std::vector<size_t> breakAddresses;
     } currentScopeInfo;
 
+    struct SFunctionControlPathResult {
+        // input data
+        struct SIn {
+            size_t begin = 0;
+            size_t originalBegin = 0;
+            bool TSXscan = false;
+        } in;
+
+        // output data
+        struct SOut {
+            int TSXNeeded = -1; // "unknown". 0 -> false, 1 -> true
+        } out;
+    };
+
     struct SOptimizer {
         CCompiler* p;
         std::vector<uint16_t> byteStartPositions;
@@ -87,6 +102,7 @@ private:
         bool accessesA(uint8_t byte);
         bool compareBytes(size_t where, std::string mask);
         void optimizeBinary();
+        void controlPathScan(SFunctionControlPathResult& data);
     } optimizer;
 };
 

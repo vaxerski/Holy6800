@@ -301,6 +301,8 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
     /* signature -> stack offset */
     std::deque<SLocal> stackVariables;
 
+    size_t scopeBegin = m_iBytesSize;
+
     auto findVariable = [&](SToken* TOKEN) -> SLocal* {
         
         const auto LASTPTR = TOKEN->raw.find_last_of('*');
@@ -1445,6 +1447,10 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
 
     m_iCurrentToken++;
 
+    if (ISFUNC) {
+        m_pCurrentFunction->length = m_iBytesSize - scopeBegin;
+    }
+
     // check for any locals to pop
     popAllLocals();
 
@@ -1620,6 +1626,18 @@ void CCompiler::SOptimizer::optimizeBinary() {
 
     auto removeBytes = [&](size_t where, size_t howMany) -> void {
         memmove(p->m_pBytes + where, p->m_pBytes + where + howMany, p->m_iBytesSize - where - howMany);
+
+        // check what func's bytes these are
+        // and adjust the length
+        for (auto& f : p->m_dFunctions) {
+            if (f.binaryBegin <= where && f.binaryBegin + f.length > where) {
+                f.length -= howMany;
+            }
+
+            if (f.binaryBegin > where) {
+                f.binaryBegin -= howMany;
+            }
+        }
 
         updateByteStartPositions();
 
@@ -2104,12 +2122,104 @@ void CCompiler::SOptimizer::optimizeBinary() {
             break;
     }
 
+    // part 4
+    // final function simplifications
+    for (auto& func : p->m_dFunctions) {
+        for (size_t i = func.binaryBegin; i < func.binaryBegin + func.length; i = getNextByteStart(i)) {
+            if (p->m_pBytes[i] == 0x30) {
+                // attempt TSX optimization
+
+                SFunctionControlPathResult data;
+                data.in.TSXscan = true;
+                data.in.begin = i + 1;  // skip the TSX
+                data.in.originalBegin = i;
+
+                controlPathScan(data);
+
+                if (data.out.TSXNeeded == 0) {
+                    removeBytes(i, 1);
+                }
+            }
+        }
+    }
+
     memset(p->m_pBytes + p->m_iBytesSize - 1, 0x00, removedBytes + 1);
 
     Debug::log(LOG, "Optimization complete.", "Elapsed: %.2fms. Bytes optimized out: %i (-%.2f%)",
                std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - begin).count() / 1000.f,
                removedBytes,
                ((double)removedBytes / (double)(p->m_iBytesSize + removedBytes)) * 100.0);
+}
+
+void CCompiler::SOptimizer::controlPathScan(SFunctionControlPathResult& data) {
+
+    if (data.in.TSXscan) {
+        // perform a TSX scan. The first opcode should be a TSX we're trying to optimize out.
+        // by default, TSXNeeded is "unknown" at -1
+        size_t scanHead = -1;
+        while (scanHead != data.in.originalBegin && scanHead != data.in.begin) {
+
+            if (scanHead == (size_t)-1) {
+                scanHead = data.in.begin;
+            }
+
+            if (isRetWai(p->m_pBytes[scanHead]))
+                break;
+
+            if (p->m_pBytes[scanHead] == 0x30) {
+                break; // another TSX, will overwrite
+            }
+
+            if (accessesIX(p->m_pBytes[scanHead])) {
+                // we're done. 
+                data.out.TSXNeeded = 1;
+                return;
+            }
+
+            if (isBranch(p->m_pBytes[scanHead])) {
+                // spawn another scanner
+                SFunctionControlPathResult result = data;
+                result.in.begin = scanHead + 2 + (int8_t)p->m_pBytes[scanHead + 1];
+                result.in.originalBegin = scanHead;
+                controlPathScan(result);
+
+                if (result.out.TSXNeeded == 1) {
+                    data.out.TSXNeeded = 1; // we're done. one control path requires a TSX.
+                    return;
+                }
+
+                // in our current scanner, move 2 bytes down and continue walking.
+                scanHead += 2;
+
+                continue;
+            }
+
+            if (p->m_pBytes[scanHead] == 0x7E /* JMP */) { // TODO: 0x6E? We don't use it for now tho.
+                SFunctionControlPathResult result = data;
+                result.in.begin = ((uint16_t)p->m_pBytes[scanHead + 1] << 8) + ((uint16_t)p->m_pBytes[scanHead + 2]);
+                result.in.originalBegin = scanHead;
+                controlPathScan(result);
+
+                if (result.out.TSXNeeded == 1) {
+                    data.out.TSXNeeded = 1;  // we're done. one control path requires a TSX.
+                    return;
+                }
+
+                // in our current scanner, move 3 bytes down and continue walking.
+                scanHead += 3;
+
+                continue;
+            }
+
+            scanHead = getNextByteStart(scanHead);
+        }
+
+        if (data.out.TSXNeeded == -1) {
+            // if it's still unknown and we didn't bail out earlier,
+            // we're clear!
+            data.out.TSXNeeded = 0;
+        }
+    }
 }
 
 bool CCompiler::performSYA(std::deque<SToken*>& input, std::vector<std::vector<SToken*>>& output) {
