@@ -8,10 +8,11 @@
 #include <chrono>
 #include <functional>
 
-CCompiler::CCompiler(std::string output, bool raw, bool optimize) {
+CCompiler::CCompiler(std::string output, bool raw, bool optimize, int optimizationSteps) {
     std::chrono::high_resolution_clock::time_point begin = std::chrono::high_resolution_clock::now();
     m_bRawOutput = raw;
     m_bOptimize = optimize;
+    m_iOptimizationSteps = optimizationSteps;
     optimizer.p = this;
 
     m_pBytes = (BYTE*)malloc(32000);  // 32K
@@ -1587,6 +1588,29 @@ bool CCompiler::SOptimizer::accessesA(uint8_t byte) {
     return byte == 0x8B || byte == 0x9B || byte == 0xAB || byte == 0xBB || byte == 0x84 || byte == 0x94 || byte == 0xA4 || byte == 0xB4 || byte == 0x1B || byte == 0x84 || byte == 0x94 || byte == 0xA4 || byte == 0xB4 || byte == 0x11 || byte == 0x4F || byte == 0x81 || byte == 0x91 || byte == 0xA1 || byte == 0xB1 || byte == 0x4A || byte == 0x88 || byte == 0x98 || byte == 0xA8 || byte == 0xB8 || byte == 0x4C || byte == 0x86 || byte == 0x96 || byte == 0xA6 || byte == 0xB6 || byte == 0x44 || byte == 0x54 || byte == 0x40 || byte == 0x50 || byte == 0x81 || byte == 0x91 || byte == 0xAA || byte == 0xBA || byte == 0x3 || byte == 0x32 || byte == 0x49 || byte == 0x46 || byte == 0x97 || byte == 0xA7 || byte == 0xB7 || byte == 0x80 || byte == 0x90 || byte == 0xA0 || byte == 0xB0 || byte == 0x16 || byte == 0x17 || byte == 0x4D;
 }
 
+void CCompiler::SOptimizer::removeBytes(size_t where, size_t howMany) {
+    memmove(p->m_pBytes + where, p->m_pBytes + where + howMany, p->m_iBytesSize - where - howMany);
+
+    // check what func's bytes these are
+    // and adjust the length
+    for (auto& f : p->m_dFunctions) {
+        if (f.binaryBegin <= where && f.binaryBegin + f.length > where) {
+            f.length -= howMany;
+        }
+
+        if (f.binaryBegin > where) {
+            f.binaryBegin -= howMany;
+        }
+    }
+
+    updateByteStartPositions();
+
+    p->m_iBytesSize -= howMany;
+    removedBytes += howMany;
+
+    fixAddressesAfterRemove(where, howMany);
+}
+
 bool CCompiler::SOptimizer::compareBytes(size_t where, std::string mask) {
     std::vector<std::string> bytes;
     size_t originalLen = mask.length();
@@ -1620,32 +1644,13 @@ void CCompiler::SOptimizer::optimizeBinary() {
 
     // go through all the bytes and check all our optimization mechanisms
 
-    size_t removedBytes = 0;
-
     updateByteStartPositions();
 
-    auto removeBytes = [&](size_t where, size_t howMany) -> void {
-        memmove(p->m_pBytes + where, p->m_pBytes + where + howMany, p->m_iBytesSize - where - howMany);
+    if (p->m_iOptimizationSteps == -1)
+        p->m_iOptimizationSteps = 1337;
 
-        // check what func's bytes these are
-        // and adjust the length
-        for (auto& f : p->m_dFunctions) {
-            if (f.binaryBegin <= where && f.binaryBegin + f.length > where) {
-                f.length -= howMany;
-            }
-
-            if (f.binaryBegin > where) {
-                f.binaryBegin -= howMany;
-            }
-        }
-
-        updateByteStartPositions();
-
-        p->m_iBytesSize -= howMany;
-        removedBytes += howMany;
-
-        fixAddressesAfterRemove(where, howMany);
-    };
+    if (p->m_iOptimizationSteps < 1)
+        return;
 
     for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
         // pass one
@@ -1752,6 +1757,8 @@ void CCompiler::SOptimizer::optimizeBinary() {
         }
     }
 
+    if (p->m_iOptimizationSteps < 2)
+        return;
 
     for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
 
@@ -1930,7 +1937,54 @@ void CCompiler::SOptimizer::optimizeBinary() {
         }
     }
 
-    while(1) {
+    if (p->m_iOptimizationSteps < 3)
+        return;
+
+    // part 3
+    // refine pass 1
+    refineBinary();
+
+    if (p->m_iOptimizationSteps < 4)
+        return;
+
+    // part 4
+    // final function simplifications
+    for (auto& func : p->m_dFunctions) {
+        for (size_t i = func.binaryBegin; i < func.binaryBegin + func.length; i = getNextByteStart(i)) {
+            if (p->m_pBytes[i] == 0x30) {
+                // attempt TSX optimization
+
+                SFunctionControlPathResult data;
+                data.in.TSXscan = true;
+                data.in.begin = i + 1;  // skip the TSX
+                data.in.originalBegin = i;
+
+                controlPathScan(data);
+
+                if (data.out.TSXNeeded == 0) {
+                    removeBytes(i, 1);
+                }
+            }
+        }
+    }
+
+    if (p->m_iOptimizationSteps < 5)
+        return;
+
+    // part 5 
+    // refine one last time
+    refineBinary();
+
+    memset(p->m_pBytes + p->m_iBytesSize - 1, 0x00, removedBytes + 1);
+
+    Debug::log(LOG, "Optimization complete.", "Elapsed: %.2fms. Bytes optimized out: %i (-%.2f%)",
+               std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - begin).count() / 1000.f,
+               removedBytes,
+               ((double)removedBytes / (double)(p->m_iBytesSize + removedBytes)) * 100.0);
+}
+
+void CCompiler::SOptimizer::refineBinary() {
+    while (1) {
         int refined = 0;
         for (size_t i = 0; i < p->m_iBytesSize; i = getNextByteStart(i)) {
             // pass 3 - refining.
@@ -2021,7 +2075,7 @@ void CCompiler::SOptimizer::optimizeBinary() {
                 // LDAA $const,[x]
                 // opt: TSX
                 // TSTA
-                // 
+                //
                 // No need for TSTA, LDAA already sets the flags
                 if (A) {
                     removeBytes(i + 3, 1);
@@ -2075,7 +2129,7 @@ void CCompiler::SOptimizer::optimizeBinary() {
 
                 size_t lenOfBlock = 0;
                 int stackOff = 1;
-                bool fail = false; // fail either on A accesses or unpredictable IX
+                bool fail = false;  // fail either on A accesses or unpredictable IX
                 std::vector<size_t> toFixIX;
 
                 while (stackOff != 0) {
@@ -2116,39 +2170,25 @@ void CCompiler::SOptimizer::optimizeBinary() {
 
                 refined++;
             }
+
+            if (compareBytes(i, "A6 ? 27 04 86 01 20 01 4F")) {
+                // LDAA $const,[X]
+                // BEQ +4
+                // LDAA #$01
+                // BRA $01
+                // CLRA
+                //
+                // if we are comparing $const,[X] to 0, why do we even clear it if it is 0?
+
+                removeBytes(i + 8, 1);
+
+                refined++;
+            }
         }
 
         if (!refined)
             break;
     }
-
-    // part 4
-    // final function simplifications
-    for (auto& func : p->m_dFunctions) {
-        for (size_t i = func.binaryBegin; i < func.binaryBegin + func.length; i = getNextByteStart(i)) {
-            if (p->m_pBytes[i] == 0x30) {
-                // attempt TSX optimization
-
-                SFunctionControlPathResult data;
-                data.in.TSXscan = true;
-                data.in.begin = i + 1;  // skip the TSX
-                data.in.originalBegin = i;
-
-                controlPathScan(data);
-
-                if (data.out.TSXNeeded == 0) {
-                    removeBytes(i, 1);
-                }
-            }
-        }
-    }
-
-    memset(p->m_pBytes + p->m_iBytesSize - 1, 0x00, removedBytes + 1);
-
-    Debug::log(LOG, "Optimization complete.", "Elapsed: %.2fms. Bytes optimized out: %i (-%.2f%)",
-               std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now() - begin).count() / 1000.f,
-               removedBytes,
-               ((double)removedBytes / (double)(p->m_iBytesSize + removedBytes)) * 100.0);
 }
 
 void CCompiler::SOptimizer::controlPathScan(SFunctionControlPathResult& data) {

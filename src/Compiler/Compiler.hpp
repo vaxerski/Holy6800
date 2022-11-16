@@ -30,7 +30,7 @@ struct SLocal {
 
 class CCompiler {
 public:
-    CCompiler(std::string output, bool raw, bool optimize);
+    CCompiler(std::string output, bool raw, bool optimize, int optimizationSteps = -1);
     ~CCompiler() = default;
 
 private:
@@ -56,6 +56,7 @@ private:
 
     bool        m_bRawOutput = false;
     bool        m_bOptimize  = false;
+    int         m_iOptimizationSteps = -1;
 
     SFunction*  m_pCurrentFunction = nullptr;
 
@@ -85,7 +86,9 @@ private:
     struct SOptimizer {
         CCompiler* p;
         std::vector<uint16_t> byteStartPositions;
+        size_t removedBytes = 0;
         void updateByteStartPositions();
+        void removeBytes(size_t where, size_t howMany);
         void fixAddressesAfterRemove(size_t where, size_t lenRemoved);
         size_t getNextByteStart(size_t cur);
         size_t getLastByteStart(size_t cur);
@@ -103,6 +106,7 @@ private:
         bool compareBytes(size_t where, std::string mask);
         void optimizeBinary();
         void controlPathScan(SFunctionControlPathResult& data);
+        void refineBinary();
     } optimizer;
 };
 
