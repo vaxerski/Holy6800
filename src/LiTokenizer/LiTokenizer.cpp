@@ -23,25 +23,38 @@ CLiTokenizer::CLiTokenizer(std::string path) {
 void CLiTokenizer::tokenizeFile(std::string& in) {
     std::chrono::high_resolution_clock::time_point begin = std::chrono::high_resolution_clock::now();
 
-    // first, split it.
-    std::deque<std::string> tokens;
+    // first, split it. token -> line
+    std::deque<std::pair<std::string, size_t>> tokens;
 
     std::string currentArg = "";
+    std::string currentLine = "";
+    size_t lineNo = 1;
     bool lastWasSpace = false;
     bool comment = false;
     for (unsigned long int i = 0; i < in.length(); ++i) {
 
+        currentLine += in[i];
+
         if (isspace(in[i])) {
             // space denotes a new token, but multiple ones should be ignored
-            if (in[i] == '\n') 
+            bool newline = false;
+
+            if (in[i] == '\n')  {
                 comment = false;
+                if (currentLine.length() > 0)
+                    currentLine.pop_back(); // pop the \n
+                m_vLines.emplace_back(currentLine);
+                currentLine = "";
+                lineNo++;
+                newline = true;
+            }
 
             if (lastWasSpace)
                 continue;
 
             lastWasSpace = true;
             if (!currentArg.empty())
-                tokens.emplace_back(currentArg);
+                tokens.push_back({currentArg, lineNo - (newline ? 1 : 0)});
             currentArg = "";
             continue;
         }
@@ -80,10 +93,12 @@ void CLiTokenizer::tokenizeFile(std::string& in) {
 
                 if (op[it] == 0) {
                     // found a long one!
-                    tokens.emplace_back(in.substr(i, it));
+                    tokens.push_back({in.substr(i, it), lineNo});
                     i += it;
                     currentArg = "";
                     foundLong = true;
+                    for (int itt = 0; itt < it; itt++)
+                        currentLine += in[i + itt - it + 1];
                     break;
                 }
             }
@@ -92,25 +107,26 @@ void CLiTokenizer::tokenizeFile(std::string& in) {
                 continue;
 
             if (!currentArg.empty())
-                tokens.emplace_back(currentArg);
+                tokens.push_back({currentArg, lineNo});
             currentArg = "";
-            tokens.emplace_back(in.substr(i, 1));
+            tokens.push_back({in.substr(i, 1), lineNo});
             continue;
         }
 
         currentArg += in[i];
     }
 
-    tokens.emplace_back(currentArg);
+    tokens.push_back({currentArg, lineNo});
 
     // tokens stage 1 done. We loaded all tokens into the tokens deque
     Debug::log(LOG, "Tokenization stage 1 done.", "Amount of tokens: %d", tokens.size());
 
     // now, we identify the tokens
     for (size_t i = 0; i < tokens.size(); ++i) {
-        std::string& token = tokens[i];
+        std::string& token = tokens[i].first;
         SToken newToken;
         newToken.raw = token;
+        newToken.lineNo = tokens[i].second;
 
         if (token == ",") {
             newToken.type = TOKEN_COLON;
@@ -130,10 +146,10 @@ void CLiTokenizer::tokenizeFile(std::string& in) {
             newToken.type = TOKEN_KEYWORD;
         } else if (std::find_if(BUILTIN_OPERATORS.begin(), BUILTIN_OPERATORS.end(), [&](const char* other) { return other == token; }) != BUILTIN_OPERATORS.end()) {
             // check ~ on constant optimizations
-            if (token == "~" && i + 1 < tokens.size() && isNumber(tokens[i + 1])) {
+            if (token == "~" && i + 1 < tokens.size() && isNumber(tokens[i + 1].first)) {
                 // trolololo
                 newToken.type = TOKEN_LITERAL;
-                newToken.raw = std::to_string(~toInt(tokens[i + 1]));
+                newToken.raw = std::to_string(~toInt(tokens[i + 1].first));
                 i++;
             } else {
                 newToken.type = TOKEN_OPERATOR;

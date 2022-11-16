@@ -4,6 +4,7 @@
 #include <string>
 #include <deque>
 #include <array>
+#include <vector>
 
 inline const std::array<const char*, 3> BUILTIN_TYPES = {
     "U8",
@@ -65,6 +66,7 @@ enum eTokenType {
 struct SToken {
     eTokenType type = TOKEN_INVALID;
     std::string raw = "";
+    size_t lineNo = 0;
 };
 
 class CLiTokenizer {
@@ -75,6 +77,8 @@ public:
     std::deque<SToken>  m_dTokens;
 
     std::string         m_szInputFile = "";
+
+    std::vector<std::string> m_vLines;
 
 private:
     void            tokenizeFile(std::string&);

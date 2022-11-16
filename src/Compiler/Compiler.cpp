@@ -144,7 +144,7 @@ bool CCompiler::compile() {
             // stage 1: look for a type
 
             if (PTOKENS[i].type != TOKEN_TYPE) {
-                Debug::log(ERR, "Invalid token", "Token %i is invalid. Got %s, expected TOKEN_TYPE", i, PTOKENS[i].raw.c_str());
+                Debug::err("Invalid token", PTOKENS[i].lineNo, "Token %i is invalid. Got %s, expected TOKEN_TYPE", i, PTOKENS[i].raw.c_str());
                 return false;
             }
 
@@ -154,7 +154,7 @@ bool CCompiler::compile() {
 
         if (!funcName) {
             if (PTOKENS[i].type != TOKEN_LITERAL) {
-                Debug::log(ERR, "Invalid token", "Token %i is invalid. Got %s, expected TOKEN_LITERAL", i, PTOKENS[i].raw.c_str());
+                Debug::err("Invalid token", PTOKENS[i].lineNo, "Token %i is invalid. Got %s, expected TOKEN_LITERAL", i, PTOKENS[i].raw.c_str());
                 return false;
             }
 
@@ -164,7 +164,7 @@ bool CCompiler::compile() {
 
         if (PTOKENS[i].type != TOKEN_OPEN_PARENTHESIS) {
             // error, expecting an arg list
-            Debug::log(ERR, "Invalid token", "Token %i is invalid. Got %s, expected TOKEN_OPEN_PARENTHESIS", i, PTOKENS[i].raw.c_str());
+            Debug::err("Invalid token", PTOKENS[i].lineNo, "Token %i is invalid. Got %s, expected TOKEN_OPEN_PARENTHESIS", i, PTOKENS[i].raw.c_str());
             return false;
         }
 
@@ -174,12 +174,12 @@ bool CCompiler::compile() {
         while (PTOKENS[i].type != TOKEN_CLOSE_PARENTHESIS) {
 
             if (PTOKENS[i].type != TOKEN_TYPE) {
-                Debug::log(ERR, "Invalid token", "Token %i is invalid. Got %s, expected TOKEN_TYPE", i, PTOKENS[i].raw.c_str());
+                Debug::err("Invalid token", PTOKENS[i].lineNo, "Token %i is invalid. Got %s, expected TOKEN_TYPE", i, PTOKENS[i].raw.c_str());
                 return false;
             }
 
             if (PTOKENS[i + 1].type != TOKEN_LITERAL) {
-                Debug::log(ERR, "Invalid token", "Token %i is invalid. Got %s, expected TOKEN_LITERAL", i + 1, PTOKENS[i].raw.c_str());
+                Debug::err("Invalid token", PTOKENS[i + 1].lineNo, "Token %i is invalid. Got %s, expected TOKEN_LITERAL", i + 1, PTOKENS[i].raw.c_str());
                 return false;
             }
 
@@ -198,7 +198,7 @@ bool CCompiler::compile() {
             i++;
 
         if (PTOKENS[i].type != TOKEN_OPEN_CURLY) {
-            Debug::log(ERR, "Invalid token", "Token %i is invalid. Got %s, expected TOKEN_OPEN_CURLY", i, PTOKENS[i].raw.c_str());
+            Debug::err("Invalid token", PTOKENS[i].lineNo, "Token %i is invalid. Got %s, expected TOKEN_OPEN_CURLY", i, PTOKENS[i].raw.c_str());
             return false;
         }
 
@@ -225,7 +225,7 @@ bool CCompiler::compile() {
             jumpedTokens++;
 
             if (PTOKENS.size() < i + jumpedTokens) {
-                Debug::log(ERR, "Syntax error", "unclosed curly brace detected while parsing token %i (%s)", i, PTOKENS[i].raw.c_str());
+                Debug::err("Syntax error", PTOKENS[i].lineNo, "unclosed curly brace detected while parsing token %i (%s)", i, PTOKENS[i].raw.c_str());
                 return false;
             }
         }
@@ -264,8 +264,8 @@ bool CCompiler::compileFunction(SToken* returnType, SToken* name, std::deque<std
 
     // verify signature
     if (std::find_if(m_dFunctions.begin(), m_dFunctions.end(), [&] (const SFunction& other) { return other.signature == newFunction.signature; }) != m_dFunctions.end()) {
-        Debug::log(ERR, "Error while compiling: duplicate function signature", "Function signature %s was defined more than once.", newFunction.signature);
-        return -1;
+        Debug::err("Duplicate function signature", name->lineNo, "Function signature %s was defined more than once.", newFunction.signature.c_str());
+        return 0;
     }
 
     newFunction.binaryBegin = m_iBytesSize;
@@ -344,7 +344,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 iter++;
                 
                 if (i + 1 + argno >= PTOKENS.size()) {
-                    Debug::log(ERR, "Syntax error", "unclosed parentheses", PTOKENS[i].raw.c_str());
+                    Debug::err("Syntax error", PTOKENS[i - iter].lineNo, "unclosed parentheses");
                     return false;
                 }
             }
@@ -385,7 +385,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
         int pushedVars = 0;
         while (argno > 0 && PTOKENS[i].type != TOKEN_CLOSE_PARENTHESIS) {
             if (i >= PTOKENS.size()) {
-                Debug::log(ERR, "Syntax error", "unclosed parentheses", PTOKENS[i].raw.c_str());
+                Debug::err("Syntax error", PTOKENS[i - pushedVars].lineNo, "unclosed parentheses");
                 return false;
             }
 
@@ -472,7 +472,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 }
 
                 if (!callFunction(foundI)) {
-                    Debug::log(ERR, "Syntax error", "requested variable %s was not declared.", token->raw.c_str());
+                    Debug::err("Syntax error", token->lineNo, "requested variable %s was not declared.", token->raw.c_str());
                     return false;
                 } else {
                     // we got the var in A.
@@ -614,7 +614,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                         writeBytes(m_pBytes + m_iBytesSize, bytes, 20);
                         m_iBytesSize += 20;
                     } else if (TOKEN[0]->raw == "/") {
-                        Debug::log(ERR, "Syntax error", "/ not implemented");
+                        Debug::err("Syntax error", TOKEN[0]->lineNo, "/ not implemented");
                     } else if (TOKEN[0]->raw == ">") {
                         BYTE bytes[] = {
                             0x11,       /* CBA */
@@ -860,7 +860,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 // while loop, get the cond first
 
                 if (PTOKENS[i + 1].type != TOKEN_OPEN_PARENTHESIS) {
-                    Debug::log(ERR, "Syntax error", "expected expression in () after while", TOKEN->raw.c_str());
+                    Debug::err("Syntax error", PTOKENS[i + 1].lineNo, "expected expression in () after while");
                     return false;
                 }
 
@@ -871,7 +871,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     i++;
 
                     if (i >= PTOKENS.size()) {
-                        Debug::log(ERR, "Syntax error", "unclosed parentheses", TOKEN->raw.c_str());
+                        Debug::err("Syntax error", PTOKENS[i - tokensForExpr.size()].lineNo, "unclosed parentheses");
                         return false;
                     }
                 }
@@ -935,7 +935,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 }
             } else if (TOKEN->raw == "if") {
                 if (PTOKENS[i + 1].type != TOKEN_OPEN_PARENTHESIS) {
-                    Debug::log(ERR, "Syntax error", "expected expression in () after if", TOKEN->raw.c_str());
+                    Debug::err("Syntax error", PTOKENS[i + 1].lineNo, "expected expression in () after if");
                     return false;
                 }
 
@@ -952,7 +952,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                         parenthdiff--;
 
                     if (i >= PTOKENS.size()) {
-                        Debug::log(ERR, "Syntax error", "unclosed parentheses", TOKEN->raw.c_str());
+                        Debug::err("Syntax error", PTOKENS[i - tokensForExpr.size()].lineNo, "unclosed parentheses");
                         return false;
                     }
                 }
@@ -1050,7 +1050,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             } else if (TOKEN->raw == "break") {
 
                 if (!currentScopeInfo.isWhile && !currentScopeInfo.isSwitch) {
-                    Debug::log(ERR, "Syntax error", "Unexpected token break at pos %i", i);
+                    Debug::err("Syntax error", TOKEN->lineNo, "Unexpected token break at pos %i", i);
                     return false;
                 }
 
@@ -1076,7 +1076,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             } else if (TOKEN->raw == "continue") {
                 
                 if (!currentScopeInfo.isWhile) {
-                    Debug::log(ERR, "Syntax error", "Unexpected token continue at pos %i", i);
+                    Debug::err("Syntax error", TOKEN->lineNo, "Unexpected token continue at pos %i", i);
                     return false;
                 }
 
@@ -1091,7 +1091,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 m_iBytesSize += 3;
             } else if (TOKEN->raw == "switch") {
                 if (PTOKENS[i + 1].type != TOKEN_OPEN_PARENTHESIS) {
-                    Debug::log(ERR, "Syntax error", "expected expression in () after switch");
+                    Debug::err("Syntax error", PTOKENS[i + 1].lineNo, "expected expression in () after switch");
                     return false;
                 }
 
@@ -1108,7 +1108,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                         parenthdiff--;
 
                     if (i >= PTOKENS.size()) {
-                        Debug::log(ERR, "Syntax error", "unclosed parentheses near %s", PTOKENS[i - 2].raw.c_str());
+                        Debug::err("Syntax error", PTOKENS[i - tokensForExpr.size()].lineNo, "unclosed parentheses near %s", PTOKENS[i - tokensForExpr.size()].raw.c_str());
                         return false;
                     }
                 }
@@ -1124,7 +1124,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                 i++;
                 
                 if (PTOKENS[i].type != TOKEN_OPEN_CURLY) {
-                    Debug::log(ERR, "Syntax error", "case requires a scope, got %s", PTOKENS[i].raw.c_str());
+                    Debug::err("Syntax error", PTOKENS[i].lineNo, "case requires a scope, got %s", PTOKENS[i].raw.c_str());
                     return false;
                 }
 
@@ -1132,7 +1132,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     i++;
 
                     if (i >= PTOKENS.size()) {
-                        Debug::log(ERR, "Syntax error", "unclosed brackets near %s", PTOKENS[i - 2].raw.c_str());
+                        Debug::err("Syntax error", PTOKENS[i - 2].lineNo, "unclosed brackets near %s", PTOKENS[i - 2].raw.c_str());
                         return false;
                     }
 
@@ -1142,7 +1142,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                             // stage 0 is CASE
 
                             if (PTOKENS[i].raw != "case") {
-                                Debug::log(ERR, "Syntax error", "expected case in switch, got %s", PTOKENS[i].raw.c_str());
+                                Debug::err("Syntax error", PTOKENS[i].lineNo, "expected case in switch, got %s", PTOKENS[i].raw.c_str());
                                 return false;
                             }
 
@@ -1153,7 +1153,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                         {
                             // stage 1 is constant
                             if (!isNumber(PTOKENS[i].raw)) {
-                                Debug::log(ERR, "Syntax error", "expected constant in switch case, got %s", PTOKENS[i].raw.c_str());
+                                Debug::err("Syntax error", PTOKENS[i].lineNo, "expected constant in switch case, got %s", PTOKENS[i].raw.c_str());
                                 return false;
                             }
 
@@ -1172,7 +1172,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                             passPositions.push_back(m_iBytesSize - 1);
 
                             if (PTOKENS[i + 1].raw != ":") {
-                                Debug::log(ERR, "Syntax error", "expected constant followed by : in switch case, got %s", PTOKENS[i + 1].raw.c_str());
+                                Debug::err("Syntax error", PTOKENS[i + 1].lineNo, "expected constant followed by : in switch case, got %s", PTOKENS[i + 1].raw.c_str());
                                 return false;
                             }
 
@@ -1190,7 +1190,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
 
                             // coolio, body.
                             if (PTOKENS[i].type != TOKEN_OPEN_CURLY) {
-                                Debug::log(ERR, "Syntax error", "case bodies must be enclosed with {}, got %s", PTOKENS[i].raw.c_str());
+                                Debug::err("Syntax error", PTOKENS[i].lineNo, "case bodies must be enclosed with {}, got %s", PTOKENS[i].raw.c_str());
                                 return false;
                             }
 
@@ -1284,12 +1284,12 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             // probably a variable.
 
             if (PTOKENS[i + 1].type != TOKEN_LITERAL) {
-                Debug::log(ERR, "Syntax error", "expected a TOKEN_LITERAL after a TOKEN_TYPE (token %i)", i);
+                Debug::err("Syntax error", PTOKENS[i + 1].lineNo, "expected a TOKEN_LITERAL after a TOKEN_TYPE (token %i)", i);
                 return false;
             }
 
             if (PTOKENS[i + 2].raw != "=") {
-                Debug::log(ERR, "Syntax error", "expected a = after a variable definition", i);
+                Debug::err("Syntax error", PTOKENS[i + 2].lineNo, "expected a = after a variable definition", i);
                 return false;
             }
 
@@ -1300,7 +1300,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             const SToken* NAMETOKEN = &PTOKENS[i + 1];
 
             if (TYPETOKEN->raw == "U0") {
-                Debug::log(ERR, "Syntax error", "a variable cannot be U0", i);
+                Debug::err("Syntax error", TYPETOKEN->lineNo, "a variable cannot be U0", i);
                 return false;
             }
 
@@ -1314,7 +1314,7 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
             const bool PTR = TOKEN->raw[TOKEN->raw.length() - 1] == '*';
 
             if (PTR && tokensForExpr.size() > 1) {
-                Debug::log(ERR, "Syntax error", "cannot use math to assign a pointer type");
+                Debug::err("Syntax error", TOKEN->lineNo, "cannot use math to assign a pointer type");
                 return false;
             } else if (!PTR && !compileExpression(tokensForExpr, 0 /* Acc B will have the result */))
                 return false;
@@ -1355,13 +1355,13 @@ bool CCompiler::compileScope(std::deque<SLocal>& inheritedLocals, bool ISMAIN, b
                     continue;
                 }    
 
-                Debug::log(ERR, "Syntax error", "requested variable %s was not declared.", TOKEN->raw.c_str());
+                Debug::err("Syntax error", TOKEN->lineNo, "requested variable %s was not declared.", TOKEN->raw.c_str());
                 return false;
             }
 
             const auto OPERATION = &PTOKENS[i + 1];
             if ((OPERATION->raw != "=" && OPERATION->raw != "-=" && OPERATION->raw != "+=") || i + 2 >= PTOKENS.size()) {
-                Debug::log(ERR, "Syntax error", "expected assignment after variable", TOKEN->raw.c_str());
+                Debug::err("Syntax error", OPERATION->lineNo, "expected assignment after variable");
                 return false;
             }
 
@@ -2283,7 +2283,7 @@ bool CCompiler::performSYA(std::deque<SToken*>& input, std::vector<std::vector<S
             size_t end = 0;
             while(parenthdiff > 0) {
                 if (i + 2 + end >= input.size()) {
-                    Debug::log(ERR, "Syntax error", "Unclosed parenthesis");
+                    Debug::err("Syntax error", token->lineNo, "Unclosed parenthesis");
                     return false;
                 }
 
@@ -2330,7 +2330,7 @@ bool CCompiler::performSYA(std::deque<SToken*>& input, std::vector<std::vector<S
             continue;
         }
 
-        Debug::log(ERR, "Syntax error", "Invalid syntax in expression, expected TOKEN_LITERAL, FUNCTION or TOKEN_OPERATOR");
+        Debug::err("Syntax error", token->lineNo, "Invalid syntax in expression, expected TOKEN_LITERAL, FUNCTION or TOKEN_OPERATOR");
         return false;
     }
 

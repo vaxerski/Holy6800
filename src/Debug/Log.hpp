@@ -12,4 +12,5 @@ enum LogLevel {
 
 namespace Debug {
     void log(LogLevel level, std::string mainText, const char* fmt, ...);
+    void err(std::string mainText, size_t line, const char* fmt, ...);
 };
