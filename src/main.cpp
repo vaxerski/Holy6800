@@ -22,7 +22,7 @@ void printHelp() {
 
         -c [file]                   -> compile a file
         -o [file]                   -> specify output
-        -r                          -> raw output (not for hippy)
+        -r                          -> raw output (not to an SREC file)
         --no-optimizations          -> disable binary optimizations (debug builds)
         --optimization-steps [n]    -> how many optimization stages to perform. [default: -1, all]
         -h / --help                 -> print this
