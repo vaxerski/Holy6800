@@ -19,6 +19,9 @@ A simple (not feature-complete) HolyC compiler for the Motorola 6800 released in
 ## Running
 See `holy6800 --help` for options.
 
+## Building
+Depends on CMake. Run `make all` to build.
+
 ## Notes
  - `else if` is NOT supported.
  - `()` in expressions are NOT supported (e.g. `2 * (2 - 2)`)
